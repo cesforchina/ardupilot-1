@@ -316,7 +316,7 @@ def get_config(name, column=0, required=True, default=None, type=None, spaces=Fa
         ret = ' '.join(config[name][column:])
     else:
         ret = config[name][column]
-    
+
     if type is not None:
         if type == int and ret.startswith('0x'):
             try:
@@ -382,7 +382,7 @@ def write_mcu_config(f):
          f.write('#define HAL_USE_MMC_SPI TRUE\n')
          f.write('#define HAL_USE_SDC FALSE\n')
          f.write('#define HAL_SDCARD_SPI_HOOK TRUE\n')
-         build_flags.append('USE_FATFS=yes') 
+         build_flags.append('USE_FATFS=yes')
     else:
         f.write('#define HAL_USE_SDC FALSE\n')
         build_flags.append('USE_FATFS=no')
@@ -417,7 +417,7 @@ def write_mcu_config(f):
         f.write('\n// DTCM memory\n')
         f.write('#define DTCM_RAM_SIZE_KB %u\n' % dtcm_size)
         f.write('#define DTCM_BASE_ADDRESS 0x%08x\n' % get_mcu_config('DTCM_BASE_ADDRESS', True))
-        
+
     flash_reserve_start = get_config(
         'FLASH_RESERVE_START_KB', default=16, type=int)
     f.write('\n// location of loaded firmware\n')
@@ -445,7 +445,7 @@ def write_mcu_config(f):
     # setup for bootloader build
     if args.bootloader:
         f.write('''
-#define HAL_BOOTLOADER_BUILD TRUE        
+#define HAL_BOOTLOADER_BUILD TRUE
 #define HAL_USE_ADC FALSE
 #define HAL_USE_EXT FALSE
 #define HAL_NO_UARTDRIVER
@@ -459,7 +459,7 @@ def write_mcu_config(f):
 #define CH_CFG_USE_MEMPOOLS FALSE
 #define CH_DBG_FILL_THREADS FALSE
 #define CH_CFG_USE_SEMAPHORES FALSE
-#define CH_CFG_USE_HEAP FALSE        
+#define CH_CFG_USE_HEAP FALSE
 #define CH_CFG_USE_MUTEXES FALSE
 #define CH_CFG_USE_CONDVARS FALSE
 #define CH_CFG_USE_CONDVARS_TIMEOUT FALSE
@@ -717,7 +717,7 @@ def parse_timer(str):
         return (tim, chan, compl)
     else:
         error("Bad timer definition %s" % str)
- 
+
 def write_PWM_config(f):
     '''write PWM config defines'''
     rc_in = None
@@ -743,7 +743,7 @@ def write_PWM_config(f):
     if not pwm_out:
         print("No PWM output defined")
         f.write('#define HAL_USE_PWM FALSE\n')
-        
+
     if rc_in is not None:
         (n, chan, compl) = parse_timer(rc_in.label)
         if compl:
@@ -760,11 +760,11 @@ def write_PWM_config(f):
         f.write('#define STM32_RCIN_DMA_STREAM STM32_TIM_TIM%u_CH%u_DMA_STREAM\n' % (n, chan))
         f.write('#define STM32_RCIN_DMA_CHANNEL STM32_TIM_TIM%u_CH%u_DMA_CHAN\n' % (n, chan))
         f.write('\n')
-        
+
     if rc_in_int is not None:
         (n, chan, compl) = parse_timer(rc_in_int.label)
         if compl:
-            error('Complementary channel is not supported for RCININT %s' % rc_in_int.label)        
+            error('Complementary channel is not supported for RCININT %s' % rc_in_int.label)
         f.write('// RC input config\n')
         f.write('#define HAL_USE_EICU TRUE\n')
         f.write('#define STM32_EICU_USE_TIM%u TRUE\n' % n)
@@ -775,7 +775,7 @@ def write_PWM_config(f):
     if alarm is not None:
         (n, chan, compl) = parse_timer(alarm.label)
         if compl:
-            error("Complementary channel is not supported for ALARM %s" % alarm.label)        
+            error("Complementary channel is not supported for ALARM %s" % alarm.label)
         f.write('\n')
         f.write('// Alarm PWM output config\n')
         f.write('#define STM32_PWM_USE_TIM%u TRUE\n' % n)
@@ -897,6 +897,8 @@ def write_ADC_config(f):
         scale = p.extra_value('SCALE', default=None)
         if p.label == 'VDD_5V_SENS':
             f.write('#define ANALOG_VCC_5V_PIN %u\n' % chan)
+            if p.label == 'FMU_SERVORAIL_VCC_SENS':
+            f.write('#define FMU_SERVORAIL_ADC_CHAN %u\n' % chan)            
         adc_chans.append((chan, scale, p.label, p.portpin))
     adc_chans = sorted(adc_chans)
     vdd = get_config('STM32_VDD')
@@ -1124,7 +1126,7 @@ def build_peripheral_list():
                     bylabel[ptx] = p
                 if not prx in bylabel:
                     bylabel[prx] = p
-                
+
         if type.startswith('ADC'):
             peripherals.append(type)
         if type.startswith('SDIO') or type.startswith('SDMMC'):
@@ -1152,7 +1154,7 @@ def write_env_py(filename):
     if os.path.exists(defaults_filename) and not args.bootloader:
         print("Adding defaults.parm")
         env_vars['DEFAULT_PARAMETERS'] = os.path.abspath(defaults_filename)
-    
+
     # CHIBIOS_BUILD_FLAGS is passed to the ChibiOS makefile
     env_vars['CHIBIOS_BUILD_FLAGS'] = ' '.join(build_flags)
     pickle.dump(env_vars, open(filename, "wb"))
@@ -1168,7 +1170,7 @@ def romfs_wildcard(pattern):
     for f in os.listdir(os.path.join(base_path, pattern_dir)):
         if fnmatch.fnmatch(f, pattern):
             romfs[f] = os.path.join(pattern_dir, f)
-    
+
 def process_line(line):
     '''process one line of pin definition file'''
     global allpins
@@ -1178,7 +1180,7 @@ def process_line(line):
 
     if a[0].startswith('P') and a[0][1] in ports and a[0] in config:
         error("Pin %s redefined" % a[0])
-    
+
     config[a[0]] = a[1:]
     if a[0] == 'MCU':
         global mcu_type
