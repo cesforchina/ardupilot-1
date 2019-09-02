@@ -191,3 +191,7 @@ define BOARD_PWM_COUNT_DEFAULT 12
 define OSD_ENABLED ENABLED
 #font for the osd
 ROMFS_WILDCARD libraries/AP_OSD/fonts/font*.bin
+
+# the first CAN bus
+PD0 CAN1_RX CAN1
+PD1 CAN1_TX CAN1
