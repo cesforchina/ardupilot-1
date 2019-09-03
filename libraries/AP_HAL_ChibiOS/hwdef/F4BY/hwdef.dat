@@ -2,7 +2,7 @@
 # for F4BY v2.1.5 board description http://swift-flyer.com/?page_id=83
 
 # MCU class and specific type
-MCU STM32F4xx STM32F427xxs
+MCU STM32F4xx STM32F427xx
 
 # board ID for firmware load
 APJ_BOARD_ID 20
