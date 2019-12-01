@@ -106,6 +106,10 @@ const AP_Scheduler::Task Plane::scheduler_tasks[] = {
 #if LANDING_GEAR_ENABLED == ENABLED
     SCHED_TASK(landing_gear_update, 5, 50),
 #endif
+#if EFI_ENABLED
+    SCHED_TASK(efi_update,             10,    200),
+#endif
+    SCHED_TASK(update_dynamic_notch,   50,    200),
 };
 
 constexpr int8_t Plane::_failsafe_priorities[7];
@@ -166,7 +170,7 @@ void Plane::ahrs_update()
     quadplane.check_yaw_reset();
 
     // update inertial_nav for quadplane
-    quadplane.inertial_nav.update(G_Dt);
+    quadplane.inertial_nav.update();
 }
 
 /*
@@ -291,12 +295,6 @@ void Plane::one_second_loop()
             // reset the landing altitude correction
             landing.alt_offset = 0;
     }
-    
-    // update error mask of sensors and subsystems. The mask uses the
-    // MAV_SYS_STATUS_* values from mavlink. If a bit is set then it
-    // indicates that the sensor or subsystem is present but not
-    // functioning correctly
-    gcs().update_sensor_status_flags();
 }
 
 void Plane::compass_save()
@@ -309,6 +307,13 @@ void Plane::compass_save()
          */
         compass.save_offsets();
     }
+}
+
+void Plane::efi_update(void)
+{
+#if EFI_ENABLED
+    g2.efi.update();
+#endif
 }
 
 /*
@@ -379,11 +384,6 @@ void Plane::update_GPS_10Hz(void)
 
                 next_WP_loc = prev_WP_loc = home;
 
-                if (AP::compass().enabled()) {
-                    // Set compass declination automatically
-                    const Location &loc = gps.location();
-                    compass.set_initial_location(loc.lat, loc.lng);
-                }
                 ground_start_count = 0;
             }
         }
@@ -464,7 +464,7 @@ void Plane::update_navigation()
               are within the maximum of the stopping distance and the
               RTL_RADIUS
              */
-            set_mode(mode_qrtl, MODE_REASON_UNKNOWN);
+            set_mode(mode_qrtl, ModeReason::UNKNOWN);
             break;
         } else if (g.rtl_autoland == 1 &&
             !auto_state.checked_for_autoland &&
@@ -473,7 +473,7 @@ void Plane::update_navigation()
             // we've reached the RTL point, see if we have a landing sequence
             if (mission.jump_to_landing_sequence()) {
                 // switch from RTL -> AUTO
-                set_mode(mode_auto, MODE_REASON_UNKNOWN);
+                set_mode(mode_auto, ModeReason::UNKNOWN);
             }
 
             // prevent running the expensive jump_to_landing_sequence
@@ -485,7 +485,7 @@ void Plane::update_navigation()
             // Go directly to the landing sequence
             if (mission.jump_to_landing_sequence()) {
                 // switch from RTL -> AUTO
-                set_mode(mode_auto, MODE_REASON_UNKNOWN);
+                set_mode(mode_auto, ModeReason::UNKNOWN);
             }
 
             // prevent running the expensive jump_to_landing_sequence
@@ -502,6 +502,7 @@ void Plane::update_navigation()
     case Mode::Number::LOITER:
     case Mode::Number::AVOID_ADSB:
     case Mode::Number::GUIDED:
+    case Mode::Number::TAKEOFF:
         update_loiter(radius);
         break;
 
@@ -543,7 +544,7 @@ void Plane::set_flight_stage(AP_Vehicle::FixedWing::FlightStage fs)
 
     if (fs == AP_Vehicle::FixedWing::FLIGHT_ABORT_LAND) {
         gcs().send_text(MAV_SEVERITY_NOTICE, "Landing aborted, climbing to %dm",
-                          auto_state.takeoff_altitude_rel_cm/100);
+                        int(auto_state.takeoff_altitude_rel_cm/100));
     }
 
     flight_stage = fs;
@@ -628,7 +629,7 @@ void Plane::update_flight_stage(void)
             } else {
                 set_flight_stage(AP_Vehicle::FixedWing::FLIGHT_NORMAL);
             }
-        } else {
+        } else if (control_mode != &mode_takeoff) {
             // If not in AUTO then assume normal operation for normal TECS operation.
             // This prevents TECS from being stuck in the wrong stage if you switch from
             // AUTO to, say, FBWB during a landing, an aborted landing or takeoff.

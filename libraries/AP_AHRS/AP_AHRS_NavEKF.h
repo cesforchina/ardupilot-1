@@ -230,6 +230,10 @@ public:
     // position), false on failure
     bool get_location(struct Location &loc) const;
 
+    // return the innovations for the specified instance
+    // An out of range instance (eg -1) returns data for the primary instance
+    bool get_innovations(Vector3f &velInnov, Vector3f &posInnov, Vector3f &magInnov, float &tasInnov, float &yawInnov) const override;
+
     // get_variances - provides the innovations normalised using the innovation variance where a value of 0
     // indicates perfect consistency between the measurement and the EKF solution and a value of of 1 is the maximum
     // inconsistency that will be accepted by the filter
@@ -261,7 +265,12 @@ public:
 
     // see if EKF lane switching is possible to avoid EKF failsafe
     void check_lane_switch(void) override;
-    
+
+    void Log_Write();
+
+    // check whether compass can be bypassed for arming check in case when external navigation data is available 
+    bool is_ext_nav_used_for_yaw(void) const;
+
 private:
     enum EKF_TYPE {EKF_TYPE_NONE=0,
                    EKF_TYPE3=3,

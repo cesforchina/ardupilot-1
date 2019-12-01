@@ -27,7 +27,7 @@ void Plane::Log_Write_Attitude(void)
         targets *= degrees(100.0f);
         logger.Write_AttitudeView(*quadplane.ahrs_view, targets);
     } else {
-        logger.Write_Attitude(ahrs, targets);
+        logger.Write_Attitude(targets);
     }
     if (quadplane.in_vtol_mode() || quadplane.in_assisted_flight()) {
         // log quadplane PIDs separately from fixed wing PIDs
@@ -43,13 +43,13 @@ void Plane::Log_Write_Attitude(void)
     logger.Write_PID(LOG_PIDS_MSG, steerController.get_pid_info());
 
 #if AP_AHRS_NAVEKF_AVAILABLE
-    logger.Write_EKF(ahrs);
-    logger.Write_AHRS2(ahrs);
+    AP::ahrs_navekf().Log_Write();
+    logger.Write_AHRS2();
 #endif
 #if CONFIG_HAL_BOARD == HAL_BOARD_SITL
     sitl.Log_Write_SIMSTATE();
 #endif
-    logger.Write_POS(ahrs);
+    logger.Write_POS();
 }
 
 // do logging at loop rate
@@ -195,7 +195,7 @@ struct PACKED log_Sonar {
 void Plane::Log_Write_Sonar()
 {
     uint16_t distance = 0;
-    if (rangefinder.status_orient(ROTATION_PITCH_270) == RangeFinder::RangeFinder_Good) {
+    if (rangefinder.status_orient(ROTATION_PITCH_270) == RangeFinder::Status::Good) {
         distance = rangefinder.distance_cm_orient(ROTATION_PITCH_270);
     }
 

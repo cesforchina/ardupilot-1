@@ -25,6 +25,7 @@
 #include <GCS_MAVLink/GCS.h>
 #include <AP_Module/AP_Module.h>
 #include <AP_GPS/AP_GPS.h>
+#include <AP_Baro/AP_Baro.h>
 
 #if AP_AHRS_NAVEKF_AVAILABLE
 
@@ -1534,8 +1535,21 @@ void AP_AHRS_NavEKF::send_ekf_status_report(mavlink_channel_t chan) const
 
 #if CONFIG_HAL_BOARD == HAL_BOARD_SITL
     case EKF_TYPE_SITL:
-        // send zero status report
-        mavlink_msg_ekf_status_report_send(chan, 0, 0, 0, 0, 0, 0, 0);
+        {
+        // send status report with everything looking good
+        const uint16_t flags =
+        EKF_ATTITUDE | /* Set if EKF's attitude estimate is good. | */
+        EKF_VELOCITY_HORIZ | /* Set if EKF's horizontal velocity estimate is good. | */
+        EKF_VELOCITY_VERT | /* Set if EKF's vertical velocity estimate is good. | */
+        EKF_POS_HORIZ_REL | /* Set if EKF's horizontal position (relative) estimate is good. | */
+        EKF_POS_HORIZ_ABS | /* Set if EKF's horizontal position (absolute) estimate is good. | */
+        EKF_POS_VERT_ABS | /* Set if EKF's vertical position (absolute) estimate is good. | */
+        EKF_POS_VERT_AGL | /* Set if EKF's vertical position (above ground) estimate is good. | */
+        //EKF_CONST_POS_MODE | /* EKF is in constant position mode and does not know it's absolute or relative position. | */
+        EKF_PRED_POS_HORIZ_REL | /* Set if EKF's predicted horizontal position (relative) estimate is good. | */
+        EKF_PRED_POS_HORIZ_ABS; /* Set if EKF's predicted horizontal position (absolute) estimate is good. | */
+        mavlink_msg_ekf_status_report_send(chan, flags, 0, 0, 0, 0, 0, 0);
+        }
         break;
 #endif
         
@@ -1625,6 +1639,38 @@ bool AP_AHRS_NavEKF::get_location(struct Location &loc) const
 #if CONFIG_HAL_BOARD == HAL_BOARD_SITL
     case EKF_TYPE_SITL:
         return get_position(loc);
+#endif
+    }
+}
+
+// return the innovations for the primariy EKF
+// boolean false is returned if innovations are not available
+bool AP_AHRS_NavEKF::get_innovations(Vector3f &velInnov, Vector3f &posInnov, Vector3f &magInnov, float &tasInnov, float &yawInnov) const
+{
+    switch (ekf_type()) {
+    case EKF_TYPE_NONE:
+        // We are not using an EKF so no data
+        return false;
+
+    case EKF_TYPE2:
+    default:
+        // use EKF to get innovations
+        EKF2.getInnovations(-1, velInnov, posInnov, magInnov, tasInnov, yawInnov);
+        return true;
+
+    case EKF_TYPE3:
+        // use EKF to get innovations
+        EKF3.getInnovations(-1, velInnov, posInnov, magInnov, tasInnov, yawInnov);
+        return true;
+
+#if CONFIG_HAL_BOARD == HAL_BOARD_SITL
+    case EKF_TYPE_SITL:
+        velInnov.zero();
+        posInnov.zero();
+        magInnov.zero();
+        tasInnov = 0.0f;
+        yawInnov = 0.0f;
+        return true;
 #endif
     }
 }
@@ -1796,10 +1842,27 @@ void AP_AHRS_NavEKF::check_lane_switch(void)
     }
 }
 
+void AP_AHRS_NavEKF::Log_Write()
+{
+    get_NavEKF2().Log_Write();
+    get_NavEKF3().Log_Write();
+}
 
 AP_AHRS_NavEKF &AP::ahrs_navekf()
 {
     return static_cast<AP_AHRS_NavEKF&>(*AP_AHRS::get_singleton());
+}
+
+// check whether compass can be bypassed for arming check in case when external navigation data is available 
+bool AP_AHRS_NavEKF::is_ext_nav_used_for_yaw(void) const
+{
+    switch (active_EKF_type()) {
+    case EKF_TYPE2:
+        return EKF2.isExtNavUsedForYaw();
+        
+    default:
+        return false; 
+    }
 }
 
 #endif // AP_AHRS_NAVEKF_AVAILABLE

@@ -217,7 +217,7 @@ float NavEKF2_core::getPosDownDerivative(void) const
 {
     // return the value calculated from a complementary filter applied to the EKF height and vertical acceleration
     // correct for the IMU offset (EKF calculations are at the IMU)
-    return posDownDerivative + velOffsetNED.z;
+    return vertCompFiltState.vel + velOffsetNED.z;
 }
 
 // This returns the specific forces in the NED frame
@@ -595,7 +595,7 @@ void NavEKF2_core::send_status_report(mavlink_channel_t chan)
 // report the reason for why the backend is refusing to initialise
 const char *NavEKF2_core::prearm_failure_reason(void) const
 {
-    if (imuSampleTime_ms - lastGpsVelFail_ms > 10000) {
+    if (gpsGoodToAlign) {
         // we are not failing
         return nullptr;
     }
@@ -614,5 +614,11 @@ uint8_t NavEKF2_core::getFramesSincePredict(void) const
 void NavEKF2_core::getOutputTrackingError(Vector3f &error) const
 {
     error = outputTrackError;
+}
+
+// return true when external nav data is also being used as a yaw observation
+bool NavEKF2_core::isExtNavUsedForYaw()
+{
+    return extNavUsedForYaw;
 }
 

@@ -189,12 +189,12 @@ void ModeAuto::takeoff_start(const Location& dest_loc)
 }
 
 // auto_wp_start - initialises waypoint controller to implement flying to a particular destination
-void ModeAuto::wp_start(const Vector3f& destination)
+void ModeAuto::wp_start(const Vector3f& destination, bool terrain_alt)
 {
     _mode = Auto_WP;
 
     // initialise wpnav (no need to check return status because terrain data is not used)
-    wp_nav->set_wp_destination(destination, false);
+    wp_nav->set_wp_destination(destination, terrain_alt);
 
     // initialise yaw
     // To-Do: reset the yaw only when the previous navigation command is not a WP.  this would allow removing the special check for ROI
@@ -370,7 +370,7 @@ bool ModeAuto::is_landing() const
 
 bool ModeAuto::is_taking_off() const
 {
-    return _mode == Auto_TakeOff;
+    return ((_mode == Auto_TakeOff) && !wp_nav->reached_wp_destination());
 }
 
 bool ModeAuto::landing_gear_should_be_deployed() const
@@ -539,7 +539,7 @@ void ModeAuto::exit_mission()
     if (!copter.ap.land_complete) {
         // try to enter loiter but if that fails land
         if (!loiter_start()) {
-            set_mode(LAND, MODE_REASON_MISSION_END);
+            set_mode(Mode::Number::LAND, ModeReason::MISSION_END);
         }
     } else {
         // if we've landed it's safe to disarm
@@ -551,7 +551,7 @@ void ModeAuto::exit_mission()
 bool ModeAuto::do_guided(const AP_Mission::Mission_Command& cmd)
 {
     // only process guided waypoint if we are in guided mode
-    if (copter.control_mode != GUIDED && !(copter.control_mode == AUTO && mode() == Auto_NavGuided)) {
+    if (copter.control_mode != Mode::Number::GUIDED && !(copter.control_mode == Mode::Number::AUTO && mode() == Auto_NavGuided)) {
         return false;
     }
 
@@ -607,7 +607,9 @@ bool ModeAuto::get_wp(Location& destination)
     case Auto_NavGuided:
         return copter.mode_guided.get_wp(destination);
     case Auto_WP:
-        return wp_nav->get_wp_destination(destination);
+        return wp_nav->get_oa_wp_destination(destination);
+    case Auto_RTL:
+        return copter.mode_rtl.get_wp(destination);
     default:
         return false;
     }
@@ -739,10 +741,6 @@ bool ModeAuto::verify_command(const AP_Mission::Mission_Command& cmd)
 void ModeAuto::takeoff_run()
 {
     auto_takeoff_run();
-    if (wp_nav->reached_wp_destination()) {
-        const Vector3f target = wp_nav->get_wp_destination();
-        wp_start(target);
-    }
 }
 
 // auto_wp_run - runs the auto waypoint controller
@@ -833,6 +831,7 @@ void ModeAuto::land_run()
     // if not armed set throttle to zero and exit immediately
     if (is_disarmed_or_landed()) {
         make_safe_spool_down();
+        loiter_nav->clear_pilot_desired_acceleration();
         loiter_nav->init_target();
         return;
     }
@@ -928,6 +927,7 @@ void ModeAuto::loiter_to_alt_run()
     }
 
     if (!loiter_to_alt.loiter_start_done) {
+        loiter_nav->clear_pilot_desired_acceleration();
         loiter_nav->init_target();
         _mode = Auto_LoiterToAlt;
         loiter_to_alt.loiter_start_done = true;
@@ -1356,16 +1356,16 @@ void ModeAuto::do_guided_limits(const AP_Mission::Mission_Command& cmd)
 // do_nav_delay - Delay the next navigation command
 void ModeAuto::do_nav_delay(const AP_Mission::Mission_Command& cmd)
 {
-    nav_delay_time_start = millis();
+    nav_delay_time_start_ms = millis();
 
     if (cmd.content.nav_delay.seconds > 0) {
         // relative delay
-        nav_delay_time_max = cmd.content.nav_delay.seconds * 1000; // convert seconds to milliseconds
+        nav_delay_time_max_ms = cmd.content.nav_delay.seconds * 1000; // convert seconds to milliseconds
     } else {
         // absolute delay to utc time
-        nav_delay_time_max = AP::rtc().get_time_utc(cmd.content.nav_delay.hour_utc, cmd.content.nav_delay.min_utc, cmd.content.nav_delay.sec_utc, 0);
+        nav_delay_time_max_ms = AP::rtc().get_time_utc(cmd.content.nav_delay.hour_utc, cmd.content.nav_delay.min_utc, cmd.content.nav_delay.sec_utc, 0);
     }
-    gcs().send_text(MAV_SEVERITY_INFO, "Delaying %u sec",(unsigned int)(nav_delay_time_max/1000));
+    gcs().send_text(MAV_SEVERITY_INFO, "Delaying %u sec", (unsigned)(nav_delay_time_max_ms/1000));
 }
 
 /********************************************************************************/
@@ -1452,15 +1452,15 @@ void ModeAuto::do_winch(const AP_Mission::Mission_Command& cmd)
     switch (cmd.content.winch.action) {
         case WINCH_RELAXED:
             g2.winch.relax();
-            Log_Write_Event(DATA_WINCH_RELAXED);
+            AP::logger().Write_Event(LogEvent::WINCH_RELAXED);
             break;
         case WINCH_RELATIVE_LENGTH_CONTROL:
             g2.winch.release_length(cmd.content.winch.release_length, cmd.content.winch.release_rate);
-            Log_Write_Event(DATA_WINCH_LENGTH_CONTROL);
+            AP::logger().Write_Event(LogEvent::WINCH_LENGTH_CONTROL);
             break;
         case WINCH_RATE_CONTROL:
             g2.winch.set_desired_rate(cmd.content.winch.release_rate);
-            Log_Write_Event(DATA_WINCH_RATE_CONTROL);
+            AP::logger().Write_Event(LogEvent::WINCH_RATE_CONTROL);
             break;
         default:
             // do nothing
@@ -1504,7 +1504,14 @@ void ModeAuto::do_RTL(void)
 bool ModeAuto::verify_takeoff()
 {
     // have we reached our target altitude?
-    return copter.wp_nav->reached_wp_destination();
+    const bool reached_wp_dest = copter.wp_nav->reached_wp_destination();
+
+    // retract the landing gear
+    if (reached_wp_dest) {
+        copter.landinggear.set_position(AP_LandingGear::LandingGear_Retract);
+    }
+
+    return reached_wp_dest;
 }
 
 // verify_land - returns true if landing has been completed
@@ -1517,7 +1524,7 @@ bool ModeAuto::verify_land()
             // check if we've reached the location
             if (copter.wp_nav->reached_wp_destination()) {
                 // get destination so we can use it for loiter target
-                Vector3f dest = copter.wp_nav->get_wp_destination();
+                const Vector3f& dest = copter.wp_nav->get_wp_destination();
 
                 // initialise landing controller
                 land_start(dest);
@@ -1886,8 +1893,8 @@ bool ModeAuto::verify_nav_guided_enable(const AP_Mission::Mission_Command& cmd)
 // verify_nav_delay - check if we have waited long enough
 bool ModeAuto::verify_nav_delay(const AP_Mission::Mission_Command& cmd)
 {
-    if (millis() - nav_delay_time_start > (uint32_t)MAX(nav_delay_time_max,0)) {
-        nav_delay_time_max = 0;
+    if (millis() - nav_delay_time_start_ms > nav_delay_time_max_ms) {
+        nav_delay_time_max_ms = 0;
         return true;
     }
     return false;

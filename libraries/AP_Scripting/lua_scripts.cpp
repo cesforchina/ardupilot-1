@@ -16,15 +16,8 @@
 #include "lua_scripts.h"
 #include <AP_HAL/AP_HAL.h>
 #include <GCS_MAVLink/GCS.h>
+#include "AP_Scripting.h"
 #include <AP_ROMFS/AP_ROMFS.h>
-
-#if HAL_OS_POSIX_IO
-#include <dirent.h>
-#endif
-
-#if HAL_OS_FATFS_IO
-#include <stdio.h>
-#endif
 
 #include "lua_generated_bindings.h"
 
@@ -69,16 +62,21 @@ lua_scripts::script_info *lua_scripts::load_script(lua_State *L, char *filename)
         switch (error) {
             case LUA_ERRSYNTAX:
                 gcs().send_text(MAV_SEVERITY_CRITICAL, "Lua: Syntax error in %s", filename);
+                gcs().send_text(MAV_SEVERITY_CRITICAL, "Lua: Error: %s", lua_tostring(L, -1));
+                lua_pop(L, lua_gettop(L));
                 return nullptr;
             case LUA_ERRMEM:
                 gcs().send_text(MAV_SEVERITY_CRITICAL, "Lua: Insufficent memory loading %s", filename);
+                lua_pop(L, lua_gettop(L));
                 return nullptr;
             case LUA_ERRFILE:
                 gcs().send_text(MAV_SEVERITY_CRITICAL, "Lua: Unable to load the file: %s", lua_tostring(L, -1));
                 hal.console->printf("Lua: File error: %s\n", lua_tostring(L, -1));
+                lua_pop(L, lua_gettop(L));
                 return nullptr;
             default:
                 gcs().send_text(MAV_SEVERITY_CRITICAL, "Lua: Unknown error (%d) loading %s", error, filename);
+                lua_pop(L, lua_gettop(L));
                 return nullptr;
         }
     }
@@ -116,14 +114,14 @@ void lua_scripts::load_all_scripts_in_dir(lua_State *L, const char *dirname) {
         return;
     }
 
-    DIR *d = opendir(dirname);
+    DIR *d = AP::FS().opendir(dirname);
     if (d == nullptr) {
         gcs().send_text(MAV_SEVERITY_INFO, "Lua: Could not find a scripts directory");
         return;
     }
 
     // load anything that ends in .lua
-    for (struct dirent *de=readdir(d); de; de=readdir(d)) {
+    for (struct dirent *de=AP::FS().readdir(d); de; de=AP::FS().readdir(d)) {
         uint8_t length = strlen(de->d_name);
         if (length < 5) {
             // not long enough
@@ -152,7 +150,7 @@ void lua_scripts::load_all_scripts_in_dir(lua_State *L, const char *dirname) {
         reschedule_script(script);
 
     }
-    closedir(d);
+    AP::FS().closedir(d);
 }
 
 void lua_scripts::run_next_script(lua_State *L) {
@@ -183,7 +181,7 @@ void lua_scripts::run_next_script(lua_State *L) {
     if(lua_pcall(L, 0, LUA_MULTRET, 0)) {
         if (overtime) {
             // script has consumed an excessive amount of CPU time
-            gcs().send_text(MAV_SEVERITY_CRITICAL, "Lua: %s exceeded time limit (%d)", script->name,  vm_steps);
+            gcs().send_text(MAV_SEVERITY_CRITICAL, "Lua: %s exceeded time limit (%d)", script->name,  (int)vm_steps);
             remove_script(L, script);
         } else {
             gcs().send_text(MAV_SEVERITY_INFO, "Lua: %s", lua_tostring(L, -1));
@@ -336,7 +334,7 @@ void lua_scripts::run(void) {
 
     // load the sandbox creation function
     uint32_t sandbox_size;
-    char *sandbox_data = (char *)AP_ROMFS::find_decompress("sandbox.lua", sandbox_size);
+    const char *sandbox_data = (const char *)AP_ROMFS::find_decompress("sandbox.lua", sandbox_size);
     if (sandbox_data == nullptr) {
         gcs().send_text(MAV_SEVERITY_CRITICAL, "Scripting: Could not find sandbox");
         return;
@@ -346,12 +344,12 @@ void lua_scripts::run(void) {
         gcs().send_text(MAV_SEVERITY_CRITICAL, "Scripting: Loading sandbox: %s", lua_tostring(L, -1));
         return;
     }
-    free(sandbox_data);
+    AP_ROMFS::free((const uint8_t *)sandbox_data);
 
     // Scan the filesystem in an appropriate manner and autostart scripts
     load_all_scripts_in_dir(L, SCRIPTING_DIRECTORY);
 
-    while (true) {
+    while (AP_Scripting::get_singleton()->enabled()) {
 #if defined(AP_SCRIPTING_CHECKS) && AP_SCRIPTING_CHECKS >= 1
         if (lua_gettop(L) != 0) {
             AP_HAL::panic("Lua: Stack should be empty before running scripts");
@@ -380,16 +378,22 @@ void lua_scripts::run(void) {
                 gcs().send_text(MAV_SEVERITY_DEBUG, "Lua: Running %s", scripts->name);
             }
 
-            const uint32_t startMem = lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0);
+            const int startMem = lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0);
             const uint32_t loadEnd = AP_HAL::micros();
 
             run_next_script(L);
 
             const uint32_t runEnd = AP_HAL::micros();
-            const uint32_t endMem = lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0);
+            const int endMem = lua_gc(L, LUA_GCCOUNT, 0) * 1024 + lua_gc(L, LUA_GCCOUNTB, 0);
             if (_debug_level > 1) {
-                gcs().send_text(MAV_SEVERITY_DEBUG, "Lua: Time: %d Mem: %d", runEnd - loadEnd, endMem - startMem);
+                gcs().send_text(MAV_SEVERITY_DEBUG, "Lua: Time: %u Mem: %d + %d",
+                                                    (unsigned int)(runEnd - loadEnd),
+                                                    (int)endMem,
+                                                    (int)(endMem - startMem));
             }
+
+            // garbage collect after each script, this shouldn't matter, but seems to resolve a memory leak
+            lua_gc(L, LUA_GCCOLLECT, 0);
 
         } else {
             gcs().send_text(MAV_SEVERITY_DEBUG, "Lua: No scripts to run");
