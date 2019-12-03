@@ -220,3 +220,5 @@ define OSD_ENABLED ENABLED
 define HAL_OSD_TYPE_DEFAULT 1
 #font for the osd
 ROMFS_WILDCARD libraries/AP_OSD/fonts/font*.bin
+
+#添加无用代码，测试
