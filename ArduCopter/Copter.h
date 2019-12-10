@@ -318,10 +318,7 @@ private:
     AP_RPM rpm_sensor;
 #endif
 
-    // Inertial Navigation EKF
-    NavEKF2 EKF2{&ahrs, rangefinder};
-    NavEKF3 EKF3{&ahrs, rangefinder};
-    AP_AHRS_NavEKF ahrs{EKF2, EKF3, AP_AHRS_NavEKF::FLAG_ALWAYS_USE_EKF};
+    // Inertial Navigation EKF - different viewpoint
     AP_AHRS_View *ahrs_view;
 
 #if CONFIG_HAL_BOARD == HAL_BOARD_SITL
@@ -529,11 +526,6 @@ private:
     // Parachute release
 #if PARACHUTE == ENABLED
     AP_Parachute parachute{relay};
-#endif
-
-    // Button 
-#if BUTTON_ENABLED == ENABLED
-    AP_Button button;
 #endif
 
     // Landing Gear Controller

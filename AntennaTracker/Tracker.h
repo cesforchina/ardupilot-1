@@ -1,7 +1,7 @@
 /*
    Lead developers: Matthew Ridley and Andrew Tridgell
 
-   Please contribute your ideas! See http://dev.ardupilot.org for details
+   Please contribute your ideas! See https://dev.ardupilot.org for details
 
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -89,15 +89,6 @@ private:
     uint32_t start_time_ms = 0;
 
     AP_Logger logger;
-
-// Inertial Navigation EKF
-#if AP_AHRS_NAVEKF_AVAILABLE
-    NavEKF2 EKF2{&ahrs, rangefinder};
-    NavEKF3 EKF3{&ahrs, rangefinder};
-    AP_AHRS_NavEKF ahrs{EKF2, EKF3};
-#else
-    AP_AHRS_DCM ahrs;
-#endif
 
 #if CONFIG_HAL_BOARD == HAL_BOARD_SITL
     SITL::SITL sitl;

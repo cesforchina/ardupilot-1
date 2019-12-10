@@ -484,7 +484,11 @@ private:
     int32_t condition_value;  // used in condition commands (eg delay, change alt, etc.)
     uint32_t condition_start;
 
-    LandStateType land_state = LandStateType_FlyToLocation; // records state of land (flying to location, descending)
+    enum class State {
+        FlyToLocation = 0,
+        Descending = 1
+    };
+    State state = State::FlyToLocation;
 
     struct {
         PayloadPlaceStateType state = PayloadPlaceStateType_Calibrating_Hover_Start; // records state of place (descending, releasing, released, ...)
@@ -1221,7 +1225,7 @@ private:
         MIX_THROTTLE = 13,  // mixer throttle axis is being excited
     };
 
-    AP_Int8 axis;               // Controls which axis are being excited
+    AP_Int8 axis;               // Controls which axis are being excited. Set to non-zero to display other parameters
     AP_Float waveform_magnitude;// Magnitude of chirp waveform
     AP_Float frequency_start;   // Frequency at the start of the chirp
     AP_Float frequency_stop;    // Frequency at the end of the chirp

@@ -60,9 +60,7 @@ void Tracker::init_tracker()
 #endif
 
 #ifdef ENABLE_SCRIPTING
-    if (!scripting.init()) {
-        gcs().send_text(MAV_SEVERITY_ERROR, "Scripting failed to start");
-    }
+    scripting.init();
 #endif // ENABLE_SCRIPTING
 
     // initialise compass
@@ -86,6 +84,9 @@ void Tracker::init_tracker()
 
     // set serial ports non-blocking
     serial_manager.set_blocking_writes_all(false);
+
+    // initialise rc channels including setting mode
+    rc().init();
 
     // initialise servos
     init_servos();
@@ -276,6 +277,13 @@ void AP_Camera::control_msg(const mavlink_message_t &) {}
 void AP_Camera::configure(float, float, float, float, float, float, float) {}
 void AP_Camera::control(float, float, float, float, float, float) {}
 void AP_Camera::send_feedback(mavlink_channel_t chan) {}
+void AP_Camera::take_picture() {}
+namespace AP {
+    AP_Camera *camera() {
+        return nullptr;
+    }
+};
+
 /* end dummy methods to avoid having to link against AP_Camera */
 
 // dummy method to avoid linking AFS
