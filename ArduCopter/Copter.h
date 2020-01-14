@@ -393,9 +393,7 @@ private:
     // There are multiple states defined such as STABILIZE, ACRO,
     Mode::Number control_mode;
     ModeReason control_mode_reason = ModeReason::UNKNOWN;
-
     Mode::Number prev_control_mode;
-    ModeReason prev_control_mode_reason = ModeReason::UNKNOWN;
 
     RCMapper rcmap;
 
@@ -591,9 +589,6 @@ private:
 
     bool standby_active;
 
-    // set when we are upgrading parameters from 3.4
-    bool upgrading_frame_params;
-
     static const AP_Scheduler::Task scheduler_tasks[];
     static const AP_Param::Info var_info[];
     static const struct LogStructure log_structure[];
@@ -751,6 +746,7 @@ private:
     bool should_use_landing_swash() const;
     void update_heli_control_dynamics(void);
     void heli_update_landing_swash();
+    float get_pilot_desired_rotor_speed() const;
     void heli_update_rotor_speed_targets();
     void heli_update_autorotation();
 #if MODE_AUTOROTATE_ENABLED == ENABLED
@@ -798,6 +794,7 @@ private:
     // mode.cpp
     bool set_mode(Mode::Number mode, ModeReason reason);
     bool set_mode(const uint8_t new_mode, const ModeReason reason) override;
+    uint8_t get_mode() const override { return (uint8_t)control_mode; }
     void update_flight_mode();
     void notify_flight_mode();
 
@@ -861,15 +858,7 @@ private:
     void winch_init();
     void winch_update();
 
-    // setup.cpp
-    void report_compass();
-    void print_blanks(int16_t num);
-    void print_divider(void);
-    void print_enabled(bool b);
-    void report_version();
-
     // switches.cpp
-    void read_control_switch();
     void save_trim();
     void auto_trim();
 
@@ -890,7 +879,6 @@ private:
     // terrain.cpp
     void terrain_update();
     void terrain_logging();
-    bool terrain_use();
 
     // tuning.cpp
     void tuning();

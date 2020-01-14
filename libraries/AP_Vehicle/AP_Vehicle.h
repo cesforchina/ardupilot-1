@@ -29,10 +29,13 @@
 #include <AP_Logger/AP_Logger.h>
 #include <AP_Notify/AP_Notify.h>                    // Notify library
 #include <AP_Param/AP_Param.h>
+#include <AP_RangeFinder/AP_RangeFinder.h>
 #include <AP_Relay/AP_Relay.h>                      // APM relay
 #include <AP_RSSI/AP_RSSI.h>                        // RSSI Library
+#include <AP_Scheduler/AP_Scheduler.h>
 #include <AP_SerialManager/AP_SerialManager.h>      // Serial manager library
 #include <AP_ServoRelayEvents/AP_ServoRelayEvents.h>
+#include <AP_Camera/AP_RunCam.h>
 
 class AP_Vehicle : public AP_HAL::HAL::Callbacks {
 
@@ -42,6 +45,7 @@ public:
         if (_singleton) {
             AP_HAL::panic("Too many Vehicles");
         }
+        AP_Param::setup_object_defaults(this, var_info);
         _singleton = this;
     }
 
@@ -52,6 +56,7 @@ public:
     static AP_Vehicle *get_singleton();
 
     bool virtual set_mode(const uint8_t new_mode, const ModeReason reason) = 0;
+    uint8_t virtual get_mode() const = 0;
 
     /*
       common parameters for fixed wing aircraft
@@ -106,6 +111,11 @@ public:
         AP_Int16 angle_max;
     };
 
+    void get_common_scheduler_tasks(const AP_Scheduler::Task*& tasks, uint8_t& num_tasks);
+
+    // initialize the vehicle. Called from AP_BoardConfig
+    void init_vehicle();
+
 protected:
 
     // board specific config
@@ -125,7 +135,9 @@ protected:
     RangeFinder rangefinder;
 
     AP_RSSI rssi;
-
+#if HAL_RUNCAM_ENABLED
+    AP_RunCam runcam;
+#endif
     AP_SerialManager serial_manager;
 
     AP_Relay relay;
@@ -138,16 +150,20 @@ protected:
 
     // Inertial Navigation EKF
 #if AP_AHRS_NAVEKF_AVAILABLE
-    NavEKF2 EKF2{&ahrs, rangefinder};
-    NavEKF3 EKF3{&ahrs, rangefinder};
+    NavEKF2 EKF2{&ahrs};
+    NavEKF3 EKF3{&ahrs};
     AP_AHRS_NavEKF ahrs{EKF2, EKF3};
 #else
     AP_AHRS_DCM ahrs;
 #endif
 
+    static const struct AP_Param::GroupInfo var_info[];
+    static const struct AP_Scheduler::Task scheduler_tasks[];
+
 private:
 
     static AP_Vehicle *_singleton;
+    bool init_done;
 
 };
 
@@ -156,5 +172,7 @@ namespace AP {
 };
 
 extern const AP_HAL::HAL& hal;
+
+extern const AP_Param::Info vehicle_var_info[];
 
 #include "AP_Vehicle_Type.h"
