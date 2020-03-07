@@ -654,7 +654,7 @@ void AP_GPS::update_instance(uint8_t instance)
         return;
     }
 
-    if (drivers[instance] == nullptr || state[instance].status == NO_GPS) {
+    if (drivers[instance] == nullptr) {
         // we don't yet know the GPS type of this one, or it has timed
         // out and needs to be re-initialised
         detect_instance(instance);
@@ -740,7 +740,7 @@ void AP_GPS::update(void)
 
     // calculate number of instances
     for (uint8_t i=0; i<GPS_MAX_RECEIVERS; i++) {
-        if (state[i].status != NO_GPS) {
+        if (drivers[i] != nullptr) {
             num_instances = i+1;
         }
     }
@@ -1002,7 +1002,7 @@ void AP_GPS::send_mavlink_gps_raw(mavlink_channel_t chan)
         hacc * 1000,          // one-sigma standard deviation in mm
         vacc * 1000,          // one-sigma standard deviation in mm
         sacc * 1000,          // one-sigma standard deviation in mm/s
-        0, 0);                   // TODO one-sigma heading accuracy standard deviation
+        0);                   // TODO one-sigma heading accuracy standard deviation
 }
 
 #if GPS_MAX_RECEIVERS > 1
@@ -1032,7 +1032,7 @@ void AP_GPS::send_mavlink_gps2_raw(mavlink_channel_t chan)
         ground_course(1)*100, // 1/100 degrees,
         num_sats(1),
         state[1].rtk_num_sats,
-        state[1].rtk_age_ms, 0);
+        state[1].rtk_age_ms);
 }
 #endif // GPS_MAX_RECEIVERS
 

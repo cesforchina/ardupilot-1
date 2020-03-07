@@ -96,8 +96,8 @@ const AP_Param::GroupInfo AP_BLHeli::var_info[] = {
 
     // @Param: PORT
     // @DisplayName: Control port
-    // @Description: This sets the telemetry port to use for blheli pass-thru
-    // @Values: 0:Console,1:Telem1,2:Telem2,3:Telem3,4:Telem4,5:Telem5
+    // @Description: This sets the serial port to use for blheli pass-thru
+    // @Values: 0:Console,1:Serial1,2:Serial2,3:Serial3,4:Serial4,5:Serial5
     // @User: Advanced
     AP_GROUPINFO("PORT",  8, AP_BLHeli, control_port, 0),
 
@@ -1301,6 +1301,26 @@ bool AP_BLHeli::get_telem_data(uint8_t esc_index, struct telem_data &td)
     return true;
 }
 
+// return the average motor frequency in Hz for dynamic filtering
+float AP_BLHeli::get_average_motor_frequency_hz() const
+{
+    float motor_freq = 0.0f;
+    const uint32_t now = AP_HAL::millis();
+    uint8_t valid_escs = 0;
+    // average the rpm of each motor as reported by BLHeli and convert to Hz
+    for (uint8_t i = 0; i < num_motors; i++) {
+        if (last_telem[i].timestamp_ms && (now - last_telem[i].timestamp_ms < 1000)) {
+            valid_escs++;
+            motor_freq += last_telem[i].rpm / 60.0f;
+        }
+    }
+    if (valid_escs > 0) {
+        motor_freq /= valid_escs;
+    }
+
+    return motor_freq;
+}
+
 /*
   implement the 8 bit CRC used by the BLHeli ESC telemetry protocol
  */
@@ -1347,7 +1367,7 @@ void AP_BLHeli::read_telemetry_packet(void)
     td.voltage = (buf[1]<<8) | buf[2];
     td.current = (buf[3]<<8) | buf[4];
     td.consumption = (buf[5]<<8) | buf[6];
-    td.rpm = ((buf[7]<<8) | buf[8]) * 100 * 2 / motor_poles;
+    td.rpm = ((buf[7]<<8) | buf[8]) * 200 / motor_poles;
     td.timestamp_ms = AP_HAL::millis();
 
     last_telem[last_telem_esc] = td;

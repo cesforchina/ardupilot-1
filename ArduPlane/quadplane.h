@@ -44,7 +44,7 @@ public:
     static const struct AP_Param::GroupInfo var_info2[];
 
     void control_run(void);
-    void control_auto(const Location &loc);
+    void control_auto(void);
     bool init_mode(void);
     bool setup(void);
 
@@ -418,6 +418,9 @@ private:
 
     // time of last control log message
     uint32_t last_ctrl_log_ms;
+
+    // time of last QTUN log message
+    uint32_t last_qtun_log_ms;
 
     // types of tilt mechanisms
     enum {TILT_TYPE_CONTINUOUS    =0,
