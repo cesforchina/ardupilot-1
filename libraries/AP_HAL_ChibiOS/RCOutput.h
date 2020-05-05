@@ -11,7 +11,7 @@
  *
  * You should have received a copy of the GNU General Public License along
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
- * 
+ *
  * Code by Andrew Tridgell and Siddharth Bharat Purohit
  */
 #pragma once
@@ -48,12 +48,13 @@ public:
         max_pwm = _esc_pwm_max;
         return true;
     }
-    void set_output_mode(uint16_t mask, enum output_mode mode) override;
+    void set_output_mode(uint16_t mask, const enum output_mode mode) override;
+    bool get_output_mode_banner(char banner_msg[], uint8_t banner_msg_len) const override;
 
     float scale_esc_to_unity(uint16_t pwm) override {
         return 2.0 * ((float) pwm - _esc_pwm_min) / (_esc_pwm_max - _esc_pwm_min) - 1.0;
     }
-    
+
     void     cork(void) override;
     void     push(void) override;
 
@@ -72,7 +73,7 @@ public:
       in the safe state
      */
     void set_safety_pwm(uint32_t chmask, uint16_t period_us) override;
-    
+
     bool enable_px4io_sbus_out(uint16_t rate_hz) override;
 
     /*
@@ -117,7 +118,7 @@ public:
       return the number of bytes read
      */
     uint16_t serial_read_bytes(uint8_t *buf, uint16_t len) override;
-    
+
     /*
       stop serial output. This restores the previous output mode for
       the channel and any other channels that were stopped by
@@ -171,7 +172,7 @@ public:
       trigger send of neopixel data
      */
     void neopixel_send(void) override;
-    
+
 private:
     struct pwm_group {
         // only advanced timers can do high clocks needed for more than 400Hz
@@ -201,17 +202,17 @@ private:
         uint64_t last_dmar_send_us;
         virtual_timer_t dma_timeout;
         uint8_t neopixel_nleds;
-        
+
         // serial output
         struct {
             // expected time per bit
             uint32_t bit_time_us;
-            
+
             // channel to output to within group (0 to 3)
             uint8_t chan;
 
             // thread waiting for byte to be written
-            thread_t *waiter;        
+            thread_t *waiter;
         } serial;
     };
 
@@ -231,7 +232,7 @@ private:
         // bitmask of bits so far (includes start and stop bits)
         uint16_t bitmask;
 
-        // value of completed byte (includes start and stop bits)        
+        // value of completed byte (includes start and stop bits)
         uint16_t byteval;
 
         // expected time per bit in system ticks
@@ -239,7 +240,7 @@ private:
 
         // the bit value of the last bit received
         uint8_t last_bit;
-        
+
         // thread waiting for byte to be read
         thread_t *waiter;
 
@@ -248,12 +249,12 @@ private:
         bool timed_out;
     } irq;
 
-    
+
     // the group being used for serial output
     struct pwm_group *serial_group;
     thread_t *serial_thread;
     tprio_t serial_priority;
-    
+
     static pwm_group pwm_group_list[];
     uint16_t _esc_pwm_min;
     uint16_t _esc_pwm_max;
@@ -266,12 +267,12 @@ private:
 
     // number of active fmu channels
     uint8_t active_fmu_channels;
-    
+
     static const uint8_t max_channels = 16;
-    
+
     // last sent values are for all channels
     uint16_t last_sent[max_channels];
-    
+
     // these values are for the local channels. Non-local channels are handled by IOMCU
     uint32_t en_mask;
     uint16_t period[max_channels];
@@ -294,8 +295,8 @@ private:
     // widest pulse for oneshot triggering
     uint16_t trigger_widest_pulse;
 
-    // are we using oneshot125 for the iomcu?
-    bool iomcu_oneshot125;
+    // iomcu output mode (pwm, oneshot or oneshot125)
+    enum output_mode iomcu_mode = MODE_PWM_NORMAL;
 
     // find a channel group given a channel number
     struct pwm_group *find_chan(uint8_t chan, uint8_t &group_idx);
@@ -321,7 +322,7 @@ private:
 
     // update safety switch and LED
     void safety_update(void);
-    
+
     /*
       DShot handling
      */
@@ -341,14 +342,14 @@ private:
     bool neopixel_pending;
 
     void dma_allocate(Shared_DMA *ctx);
-    void dma_deallocate(Shared_DMA *ctx);    
+    void dma_deallocate(Shared_DMA *ctx);
     uint16_t create_dshot_packet(const uint16_t value, bool telem_request);
     void fill_DMA_buffer_dshot(uint32_t *buffer, uint8_t stride, uint16_t packet, uint16_t clockmul);
     void dshot_send(pwm_group &group, bool blocking);
     static void dma_irq_callback(void *p, uint32_t flags);
     static void dma_unlock(void *p);
     bool mode_requires_dma(enum output_mode mode) const;
-    bool setup_group_DMA(pwm_group &group, uint32_t bitrate, uint32_t bit_width, bool active_high, const uint16_t buffer_length);
+    bool setup_group_DMA(pwm_group &group, uint32_t bitrate, uint32_t bit_width, bool active_high, const uint16_t buffer_length, bool choose_high);
     void send_pulses_DMAR(pwm_group &group, uint32_t buffer_length);
     void set_group_mode(pwm_group &group);
     bool is_dshot_protocol(const enum output_mode mode) const;

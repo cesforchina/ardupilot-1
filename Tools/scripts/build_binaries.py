@@ -137,7 +137,6 @@ is bob we will attempt to checkout bob-AVR'''
                 return True
             except subprocess.CalledProcessError:
                 self.progress("Checkout branch %s failed" % branch)
-                pass
 
         self.progress("Failed to find tag for %s %s %s %s" %
                       (vehicle, ctag, cboard, cframe))
@@ -225,12 +224,18 @@ is bob we will attempt to checkout bob-AVR'''
         with open(filepath, "w") as x:
             x.write(string)
 
+    def version_h_path(self, src):
+        '''return path to version.h'''
+        if src == 'AP_Periph':
+            return os.path.join('Tools', src, "version.h")
+        return os.path.join(src, "version.h")
+
     def addfwversion_gitversion(self, destdir, src):
         # create git-version.txt:
         gitlog = self.run_git(["log", "-1"])
         gitversion_filepath = os.path.join(destdir, "git-version.txt")
         gitversion_content = gitlog
-        versionfile = os.path.join(src, "version.h")
+        versionfile = self.version_h_path(src)
         if os.path.exists(versionfile):
             content = self.read_string_from_filepath(versionfile)
             match = re.search('define.THISFIRMWARE "([^"]+)"', content)
@@ -247,7 +252,7 @@ is bob we will attempt to checkout bob-AVR'''
 
     def addfwversion_firmwareversiontxt(self, destdir, src):
         # create firmware-version.txt
-        versionfile = os.path.join(src, "version.h")
+        versionfile = self.version_h_path(src)
         if not os.path.exists(versionfile):
             self.progress("%s does not exist" % (versionfile,))
             return
@@ -402,7 +407,11 @@ is bob we will attempt to checkout bob-AVR'''
                                          "bin",
                                          "".join([binaryname, framesuffix]))
                 files_to_copy = []
-                for extension in [".px4", ".apj", ".abin", "_with_bl.hex", ".hex"]:
+                extensions = [".px4", ".apj", ".abin", "_with_bl.hex", ".hex"]
+                if vehicle == 'AP_Periph':
+                    # need bin file for uavcan-gui-tool and MissionPlanner
+                    extensions.append('.bin')
+                for extension in extensions:
                     filepath = "".join([bare_path, extension])
                     if os.path.exists(filepath):
                         files_to_copy.append(filepath)
@@ -527,6 +536,7 @@ is bob we will attempt to checkout bob-AVR'''
                 "pxfmini",
                 "KakuteF4",
                 "KakuteF7",
+                "KakuteF7Mini",
                 "MatekF405",
                 "MatekF405-STD",
                 "MatekF405-Wing",
@@ -569,6 +579,15 @@ is bob we will attempt to checkout bob-AVR'''
                 # SITL targets
                 "SITL_x86_64_linux_gnu",
                 "SITL_arm_linux_gnueabihf",
+                ]
+
+    def AP_Periph_boards(self):
+        '''returns list of boards for AP_Periph'''
+        return ["f103-GPS",
+                "f103-ADSB",
+                "f103-RangeFinder",
+                "CUAV_GPS",
+                "ZubaxGNSS",
                 ]
 
     def build_arducopter(self, tag):
@@ -624,6 +643,17 @@ is bob we will attempt to checkout bob-AVR'''
                            "ardusub",
                            "ArduSub")
 
+    def build_AP_Periph(self, tag):
+        '''build AP_Periph binaries'''
+        boards = self.AP_Periph_boards()
+        self.build_vehicle(tag,
+                           "AP_Periph",
+                           boards,
+                           "AP_Periph",
+                           "AP_Periph",
+                           "AP_Periph")
+
+        
     def generate_manifest(self):
         '''generate manigest files for GCS to download'''
         self.progress("Generating manifest")
@@ -731,6 +761,7 @@ is bob we will attempt to checkout bob-AVR'''
             self.build_rover(tag)
             self.build_antennatracker(tag)
             self.build_ardusub(tag)
+            self.build_AP_Periph(tag)
 
         if os.path.exists(self.tmpdir):
             shutil.rmtree(self.tmpdir)

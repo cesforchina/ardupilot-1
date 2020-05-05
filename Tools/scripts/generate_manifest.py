@@ -10,7 +10,7 @@ import fnmatch
 import gen_stable
 import subprocess
 
-FIRMWARE_TYPES = ["AntennaTracker", "Copter", "Plane", "Rover", "Sub"]
+FIRMWARE_TYPES = ["AntennaTracker", "Copter", "Plane", "Rover", "Sub", "AP_Periph"]
 RELEASE_TYPES = ["beta", "latest", "stable", "stable-*", "dirty"]
 
 # mapping for board names to brand name and manufacturer
@@ -94,7 +94,8 @@ class ManifestGenerator():
             "Plane": "FIXED_WING",
             "AntennaTracker": "ANTENNA_TRACKER",
             "Rover": "GROUND_ROVER",
-            "Sub": "SUBMARINE"
+            "Sub": "SUBMARINE",
+            "AP_Periph": "CAN_PERIPHERAL",
         }
         if frame in frame_to_mavlink_dict:
             return frame_to_mavlink_dict[frame]
@@ -185,7 +186,10 @@ class ManifestGenerator():
             'VRCore-v10': ['0x27AC/0x1910'],
             'VRUBrain-v51': ['0x27AC/0x1351']
         }
-        if platform in USBID_MAP:
+        if 'USBID' in apj_json:
+            # newer APJ files have USBID in the json data
+            firmware['USBID'] = apj_json['USBID']
+        elif platform in USBID_MAP:
             firmware['USBID'] = USBID_MAP[platform]
         else:
             # all others use a single USB VID/PID
@@ -284,7 +288,7 @@ class ManifestGenerator():
             try:
                 firmware_version = open(firmware_version_file).read()
                 firmware_version = firmware_version.strip()
-                (version_numbers, release_type) = firmware_version.split("-")
+                (_, _) = firmware_version.split("-")
             except ValueError:
                 print("malformed firmware-version.txt at (%s)" % (firmware_version_file,), file=sys.stderr)
                 continue

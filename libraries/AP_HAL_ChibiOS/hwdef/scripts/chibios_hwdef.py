@@ -80,7 +80,7 @@ compass_list = []
 baro_list = []
 
 mcu_type = None
-
+dual_USB_enabled = False
 
 def is_int(str):
     '''check if a string is an integer'''
@@ -213,6 +213,8 @@ class generic_pin(object):
                     self.sig_dir = 'OUTPUT'
                 elif l == 'I2C':
                     self.sig_dir = 'OUTPUT'
+                elif l == 'OTG':
+                    self.sig_dir = 'OUTPUT'
                 else:
                     error("Unknown signal type %s:%s for %s!" % (self.portpin, self.label, mcu_type))
 
@@ -325,6 +327,8 @@ class generic_pin(object):
         v = 'HIGH'
         if self.type == 'OUTPUT':
             v = 'LOW'
+        elif self.label is not None and self.label.startswith('I2C'):
+            v = 'LOW'
         for e in self.extra:
             if e in values:
                 v = e
@@ -375,6 +379,8 @@ class generic_pin(object):
                 if e in speed_values:
                     v = e
             speed_str = "PIN_%s(%uU) |" % (v, self.pin)
+        elif self.is_CS():
+            speed_str = "PIN_SPEED_LOW(%uU) |" % (self.pin)
         else:
             speed_str = ""
         if self.af is not None:
@@ -384,8 +390,12 @@ class generic_pin(object):
                     v = 'PUD'
                 else:
                     v = "NOPULL"
+            elif self.label.startswith('I2C'):
+                v = "AF_OD"
             else:
                 v = "AF_PP"
+        elif self.is_CS():
+            v = "OUTPUT_PP"
         elif self.sig_dir == 'OUTPUT':
             if 'OPENDRAIN' in self.extra:
                 v = 'OUTPUT_OD'
@@ -603,6 +613,11 @@ def write_mcu_config(f):
     f.write('#define HAL_MEMORY_REGIONS %s\n' % ', '.join(regions))
     f.write('#define HAL_MEMORY_TOTAL_KB %u\n' % total_memory)
 
+    f.write('#define HAL_RAM0_START 0x%08x\n' % ram_map[0][0])
+    ram_reserve_start = get_config('RAM_RESERVE_START', default=0, type=int)
+    if ram_reserve_start > 0:
+        f.write('#define HAL_RAM_RESERVE_START 0x%08x\n' % ram_reserve_start)
+
     f.write('\n// CPU serial number (12 bytes)\n')
     f.write('#define UDID_START 0x%08x\n\n' % get_mcu_config('UDID_START', True))
 
@@ -658,6 +673,8 @@ def write_mcu_config(f):
 #define HAL_USE_I2C FALSE
 #define HAL_USE_PWM FALSE
 ''')
+    if env_vars.get('ROMFS_UNCOMPRESSED', False):
+        f.write('#define HAL_ROMFS_UNCOMPRESSED\n')
 
 def write_ldscript(fname):
     '''write ldscript.ld for this board'''
@@ -686,21 +703,41 @@ def write_ldscript(fname):
 
     print("Generating ldscript.ld")
     f = open(fname, 'w')
+    ram0_start = ram_map[0][0]
+    ram0_len = ram_map[0][1] * 1024
+
+    # possibly reserve some memory for app/bootloader comms
+    ram_reserve_start = get_config('RAM_RESERVE_START', default=0, type=int)
+    ram0_start += ram_reserve_start
+    ram0_len -= ram_reserve_start
+
     f.write('''/* generated ldscript.ld */
 MEMORY
 {
     flash : org = 0x%08x, len = %uK
-    ram0  : org = 0x%08x, len = %uk
+    ram0  : org = 0x%08x, len = %u
 }
 
 INCLUDE common.ld
-''' % (flash_base, flash_length, ram_map[0][0], ram_map[0][1]))
+''' % (flash_base, flash_length, ram0_start, ram0_len))
 
 def copy_common_linkerscript(outdir, hwdef):
     dirpath = os.path.dirname(hwdef)
     shutil.copy(os.path.join(dirpath, "../common/common.ld"),
                 os.path.join(outdir, "common.ld"))
 
+def get_USB_IDs():
+    '''return tuple of USB VID/PID'''
+
+    global dual_USB_enabled
+    if dual_USB_enabled:
+        # use pidcodes allocated ID
+        default_vid = 0x1209
+        default_pid = 0x5740
+    else:
+        default_vid = 0x0483
+        default_pid = 0x5740
+    return (get_config('USB_VENDOR', type=int, default=default_vid), get_config('USB_PRODUCT', type=int, default=default_pid))
 
 
 def write_USB_config(f):
@@ -708,8 +745,9 @@ def write_USB_config(f):
     if not have_type_prefix('OTG'):
         return
     f.write('// USB configuration\n')
-    f.write('#define HAL_USB_VENDOR_ID %s\n' % get_config('USB_VENDOR', default=0x0483)) # default to ST
-    f.write('#define HAL_USB_PRODUCT_ID %s\n' % get_config('USB_PRODUCT', default=0x5740))
+    (USB_VID, USB_PID) = get_USB_IDs()
+    f.write('#define HAL_USB_VENDOR_ID 0x%04x\n' % int(USB_VID))
+    f.write('#define HAL_USB_PRODUCT_ID 0x%04x\n' % int(USB_PID))
     f.write('#define HAL_USB_STRING_MANUFACTURER "%s"\n' % get_config("USB_STRING_MANUFACTURER", default="ArduPilot"))
     default_product = "%BOARD%"
     if args.bootloader:
@@ -904,6 +942,7 @@ def get_extra_bylabel(label, name, default=None):
 
 def write_UART_config(f):
     '''write UART config defines'''
+    global dual_USB_enabled
     if get_config('UART_ORDER', required=False) is None:
         return
     uart_list = config['UART_ORDER']
@@ -913,10 +952,12 @@ def write_UART_config(f):
     devnames = "ABCDEFGH"
     sdev = 0
     idx = 0
+    num_empty_uarts = 0
     for dev in uart_list:
         if dev == 'EMPTY':
             f.write('#define HAL_UART%s_DRIVER Empty::UARTDriver uart%sDriver\n' %
                 (devnames[idx], devnames[idx]))
+            num_empty_uarts += 1
         else:
             f.write(
                 '#define HAL_UART%s_DRIVER ChibiOS::UARTDriver uart%sDriver(%u)\n'
@@ -936,6 +977,8 @@ def write_UART_config(f):
         )
         uart_list.append(config['IOMCU_UART'][0])
         f.write('#define HAL_HAVE_SERVO_VOLTAGE 1\n') # make the assumption that IO gurantees servo monitoring
+        # all IOMCU capable boards have SBUS out
+        f.write('#define AP_FEATURE_SBUS_OUT 1\n')
     else:
         f.write('#define HAL_WITH_IO_MCU 0\n')
     f.write('\n')
@@ -967,6 +1010,7 @@ def write_UART_config(f):
                 '#define HAL_%s_CONFIG {(BaseSequentialStream*) &SDU2, true, false, 0, 0, false, 0, 0}\n'
                 % dev)
             OTG2_index = uart_list.index(dev)
+            dual_USB_enabled = True
         elif dev.startswith('OTG'):
             f.write(
                 '#define HAL_%s_CONFIG {(BaseSequentialStream*) &SDU1, true, false, 0, 0, false, 0, 0}\n'
@@ -1009,6 +1053,10 @@ def write_UART_config(f):
 #define HAL_USE_SERIAL HAL_USE_SERIAL_USB
 #endif
 ''')
+    num_uarts = len(devlist)
+    if 'IOMCU_UART' in config:
+        num_uarts -= 1
+    f.write('#define HAL_UART_NUM_SERIAL_PORTS %u\n' % (num_uarts+num_empty_uarts))
 
 def write_UART_config_bootloader(f):
     '''write UART config defines'''
@@ -1366,6 +1414,8 @@ def setup_apj_IDs():
     '''setup the APJ board IDs'''
     env_vars['APJ_BOARD_ID'] = get_config('APJ_BOARD_ID')
     env_vars['APJ_BOARD_TYPE'] = get_config('APJ_BOARD_TYPE', default=mcu_type)
+    (USB_VID, USB_PID) = get_USB_IDs()
+    env_vars['USBID'] = '0x%04x/0x%04x' % (USB_VID, USB_PID)
 
 def write_peripheral_enable(f):
     '''write peripheral enable lines'''
@@ -1416,7 +1466,6 @@ def write_hwdef_header(outfilename):
 ''')
 
     write_mcu_config(f)
-    write_USB_config(f)
     write_SPI_config(f)
     write_ADC_config(f)
     write_GPIO_config(f)
@@ -1425,7 +1474,6 @@ def write_hwdef_header(outfilename):
     write_BARO_config(f)
 
     write_peripheral_enable(f)
-    setup_apj_IDs()
 
     dma_resolver.write_dma_header(f, periph_list, mcu_type,
                                   dma_exclude=get_dma_exclude(periph_list),
@@ -1439,6 +1487,9 @@ def write_hwdef_header(outfilename):
     else:
         write_UART_config_bootloader(f)
 
+    setup_apj_IDs()
+    write_USB_config(f)
+
     add_bootloader()
 
     if len(romfs) > 0:
@@ -1451,20 +1502,20 @@ def write_hwdef_header(outfilename):
  * in the initialization code.
  * Please refer to the STM32 Reference Manual for details.
  */
-#define PIN_MODE_OUTPUT_PP(n)         (0 << (((n) & 7) * 4))
-#define PIN_MODE_OUTPUT_OD(n)         (4 << (((n) & 7) * 4))
-#define PIN_MODE_AF_PP(n)             (8 << (((n) & 7) * 4)) 
-#define PIN_MODE_AF_OD(n)             (12 << (((n) & 7) * 4))
-#define PIN_MODE_ANALOG(n)            (0 << (((n) & 7) * 4))
-#define PIN_MODE_NOPULL(n)            (4 << (((n) & 7) * 4))
-#define PIN_MODE_PUD(n)               (8 << (((n) & 7) * 4)) 
-#define PIN_SPEED_MEDIUM(n)           (1 << (((n) & 7) * 4))
-#define PIN_SPEED_LOW(n)              (2 << (((n) & 7) * 4))
-#define PIN_SPEED_HIGH(n)             (3 << (((n) & 7) * 4))
-#define PIN_ODR_HIGH(n)               (1 << (((n) & 15)))
-#define PIN_ODR_LOW(n)                (0 << (((n) & 15)))
-#define PIN_PULLUP(n)                 (1 << (((n) & 15)))
-#define PIN_PULLDOWN(n)               (0 << (((n) & 15)))
+#define PIN_MODE_OUTPUT_PP(n)         (0U << (((n) & 7) * 4))
+#define PIN_MODE_OUTPUT_OD(n)         (4U << (((n) & 7) * 4))
+#define PIN_MODE_AF_PP(n)             (8U << (((n) & 7) * 4))
+#define PIN_MODE_AF_OD(n)             (12U << (((n) & 7) * 4))
+#define PIN_MODE_ANALOG(n)            (0U << (((n) & 7) * 4))
+#define PIN_MODE_NOPULL(n)            (4U << (((n) & 7) * 4))
+#define PIN_MODE_PUD(n)               (8U << (((n) & 7) * 4))
+#define PIN_SPEED_MEDIUM(n)           (1U << (((n) & 7) * 4))
+#define PIN_SPEED_LOW(n)              (2U << (((n) & 7) * 4))
+#define PIN_SPEED_HIGH(n)             (3U << (((n) & 7) * 4))
+#define PIN_ODR_HIGH(n)               (1U << (((n) & 15)))
+#define PIN_ODR_LOW(n)                (0U << (((n) & 15)))
+#define PIN_PULLUP(n)                 (1U << (((n) & 15)))
+#define PIN_PULLDOWN(n)               (0U << (((n) & 15)))
 #define PIN_UNDEFINED(n)                PIN_INPUT_PUD(n)
 ''')
     else:

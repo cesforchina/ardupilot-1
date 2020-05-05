@@ -83,8 +83,17 @@ for t in $CI_BUILD_TARGET; do
         run_autotest "Rover" "build.APMrover2" "drive.APMrover2"
         continue
     fi
+    if [ "$t" == "sitltest-balancebot" ]; then
+        run_autotest "BalanceBot" "build.APMrover2" "drive.BalanceBot"
+        continue
+    fi
     if [ "$t" == "sitltest-sub" ]; then
         run_autotest "Sub" "build.ArduSub" "dive.ArduSub"
+        continue
+    fi
+
+    if [ "$t" == "unit-tests" ]; then
+        run_autotest "Unit Tests" "build.unit_tests" "run.unit_tests"
         continue
     fi
 
@@ -98,11 +107,11 @@ for t in $CI_BUILD_TARGET; do
 
     if [ "$t" == "periph-build" ]; then
         echo "Building f103 bootloader"
-        $waf configure --board f103-periph --bootloader
+        $waf configure --board f103-GPS --bootloader
         $waf clean
         $waf bootloader
         echo "Building f103 peripheral fw"
-        $waf configure --board f103-periph
+        $waf configure --board f103-GPS
         $waf clean
         $waf AP_Periph
         continue
