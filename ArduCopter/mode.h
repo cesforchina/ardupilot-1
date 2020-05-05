@@ -66,7 +66,6 @@ public:
     virtual bool is_taking_off() const;
     static void takeoff_stop() { takeoff.stop(); }
 
-    virtual bool landing_gear_should_be_deployed() const { return false; }
     virtual bool is_landing() const { return false; }
 
     // mode requires terrain to be present to be functional
@@ -172,8 +171,9 @@ protected:
     // waypoint navigation but the user can control the yaw.
     void auto_takeoff_run();
     void auto_takeoff_set_start_alt(void);
-    void auto_takeoff_attitude_run(float target_yaw_rate);
-    // altitude below which we do no navigation in auto takeoff
+
+    // altitude above-ekf-origin below which auto takeoff does not control horizontal position
+    static bool auto_takeoff_no_nav_active;
     static float auto_takeoff_no_nav_alt_cm;
 
 public:
@@ -351,7 +351,6 @@ public:
     bool loiter_start();
     void rtl_start();
     void takeoff_start(const Location& dest_loc);
-    void wp_start(const Vector3f& destination, bool terrain_alt);
     void wp_start(const Location& dest_loc);
     void land_start();
     void land_start(const Vector3f& destination);
@@ -362,7 +361,6 @@ public:
     void nav_guided_start();
 
     bool is_landing() const override;
-    bool landing_gear_should_be_deployed() const override;
 
     bool is_taking_off() const override;
 
@@ -785,7 +783,7 @@ public:
     bool requires_terrain_failsafe() const override { return true; }
 
     void set_angle(const Quaternion &q, float climb_rate_cms, bool use_yaw_rate, float yaw_rate_rads);
-    bool set_destination(const Vector3f& destination, bool use_yaw = false, float yaw_cd = 0.0, bool use_yaw_rate = false, float yaw_rate_cds = 0.0, bool yaw_relative = false);
+    bool set_destination(const Vector3f& destination, bool use_yaw = false, float yaw_cd = 0.0, bool use_yaw_rate = false, float yaw_rate_cds = 0.0, bool yaw_relative = false, bool terrain_alt = false);
     bool set_destination(const Location& dest_loc, bool use_yaw = false, float yaw_cd = 0.0, bool use_yaw_rate = false, float yaw_rate_cds = 0.0, bool yaw_relative = false);
     bool get_wp(Location &loc) override;
     void set_velocity(const Vector3f& velocity, bool use_yaw = false, float yaw_cd = 0.0, bool use_yaw_rate = false, float yaw_rate_cds = 0.0, bool yaw_relative = false, bool log_request = true);
@@ -798,7 +796,7 @@ public:
 
     bool is_taking_off() const override;
 
-    bool do_user_takeoff_start(float final_alt_above_home) override;
+    bool do_user_takeoff_start(float takeoff_alt_cm) override;
 
     GuidedMode mode() const { return guided_mode; }
 
@@ -871,7 +869,6 @@ public:
     bool is_autopilot() const override { return true; }
 
     bool is_landing() const override { return true; };
-    bool landing_gear_should_be_deployed() const override { return true; };
 
     void do_not_use_GPS();
 
@@ -1044,7 +1041,6 @@ public:
     bool state_complete() { return _state_complete; }
 
     bool is_landing() const override;
-    bool landing_gear_should_be_deployed() const override;
 
     void restart_without_terrain();
 
@@ -1392,11 +1388,12 @@ public:
     using Mode::Mode;
 
     bool init(bool ignore_checks) override;
+    void exit();
     void run() override;
 
     bool requires_GPS() const override { return true; }
     bool has_manual_throttle() const override { return false; }
-    bool allows_arming(bool from_gcs) const override { return false; }
+    bool allows_arming(bool from_gcs) const override { return true; }
     bool is_autopilot() const override { return true; }
 
     // save current position as A (dest_num = 0) or B (dest_num = 1).  If both A and B have been saved move to the one specified
@@ -1457,21 +1454,14 @@ private:
     // --- Internal variables ---
     float _initial_rpm;             // Head speed recorded at initiation of flight mode (RPM)
     float _target_head_speed;       // The terget head main rotor head speed.  Normalised by main rotor set point
-    float _fwd_speed_target;        // Target forward speed (cm/s)
     float _desired_v_z;             // Desired vertical
     int32_t _pitch_target;          // Target pitch attitude to pass to attitude controller
-    float _collective_aggression;   // The 'aggresiveness' of collective appliction
-    float _z_touch_down_start;      // The height in cm that the touch down phase began
-    float _t_touch_down_initiate;   // The time in ms that the touch down phase began
-    float now;                      // Current time in millis
-    float _entry_time_start;        // Time remaining until entry phase moves on to glide phase
+    uint32_t _entry_time_start_ms;  // Time remaining until entry phase moves on to glide phase
     float _hs_decay;                // The head accerleration during the entry phase
     float _bail_time;               // Timer for exiting the bail out phase (s)
-    float _bail_time_start;         // Time at start of bail out
-    float _des_z;                   // Desired vertical position
+    uint32_t _bail_time_start_ms;   // Time at start of bail out
     float _target_climb_rate_adjust;// Target vertical acceleration used during bail out phase
     float _target_pitch_adjust;     // Target pitch rate used during bail out phase
-    uint16_t log_counter;           // Used to reduce the data flash logging rate
 
     enum class Autorotation_Phase {
         ENTRY,

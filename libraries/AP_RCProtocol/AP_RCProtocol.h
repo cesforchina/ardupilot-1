@@ -37,6 +37,7 @@ public:
         DSM,
         SUMD,
         SRXL,
+        SRXL2,
         ST24,
         FPORT,
         NONE    //last enum always is None
@@ -62,6 +63,7 @@ public:
 
     uint8_t num_channels();
     uint16_t read(uint8_t chan);
+    void read(uint16_t *pwm, uint8_t n);
     bool new_input();
     void start_bind(void);
     int16_t get_RSSI(void) const;

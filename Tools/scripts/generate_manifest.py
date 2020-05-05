@@ -29,6 +29,8 @@ brand_map = {
     'CubeGreen-solo' : ('CubeGreen Solo', 'Hex/ProfiCNC'),
     'CUAVv5' : ('CUAVv5', 'CUAV'),
     'CUAVv5Nano' : ('CUAVv5 Nano', 'CUAV'),
+    'CUAV-Nora' : ('CUAV Nora', 'CUAV'),
+    'CUAV-X7' : ('CUAV X7', 'CUAV'),
     'DrotekP3Pro' : ('Pixhawk 3 Pro', 'Drotek'),
     'MatekF405' : ('Matek F405', 'Matek'),
     'MatekF405-STD' : ('Matek F405 STD', 'Matek'),
@@ -38,6 +40,7 @@ brand_map = {
     'Pixracer' : ('PixRacer', 'mRobotics'),
     'mRoX21' : ('mRo X2.1', 'mRobotics'),
     'mRoX21-777' : ('mRo X2.1-777', 'mRobotics'),
+    'mRoNexus' : ('mRo Nexus', 'mRobotics'),
     'TBS-Colibri-F7' : ('Colibri F7', 'TBS'),
     'sparky2' : ('Sparky2', 'TauLabs'),
     'mindpx-v2' : ('MindPX V2', 'AirMind'),
@@ -189,7 +192,7 @@ class ManifestGenerator():
         }
         if 'USBID' in apj_json:
             # newer APJ files have USBID in the json data
-            firmware['USBID'] = apj_json['USBID']
+            firmware['USBID'] = [apj_json['USBID']]
         elif platform in USBID_MAP:
             firmware['USBID'] = USBID_MAP[platform]
         else:
@@ -225,6 +228,11 @@ class ManifestGenerator():
             (brand_name, manufacturer) = brand_map[platform]
             firmware['brand_name'] = brand_name
             firmware['manufacturer'] = manufacturer
+        # copy over some extra information if available
+        extra_tags = [ 'image_size' ]
+        for tag in extra_tags:
+            if tag in apj_json:
+                firmware[tag] = apj_json[tag]
 
     def add_USB_IDs(self, firmware):
         '''add USB IDs to a firmware'''
@@ -472,7 +480,7 @@ class ManifestGenerator():
                   file=sys.stderr)
 
         structure = self.walk_directory(self.basedir)
-        return json.dumps(structure, indent=4)
+        return json.dumps(structure, indent=4, separators=(',', ': '))
 
 
 def usage():

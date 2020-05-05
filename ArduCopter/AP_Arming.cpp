@@ -60,7 +60,8 @@ bool AP_Arming_Copter::run_pre_arm_checks(bool display_failure)
         & parameter_checks(display_failure)
         & motor_checks(display_failure)
         & pilot_throttle_checks(display_failure)
-        & oa_checks(display_failure) &
+        & oa_checks(display_failure)
+        & gcs_failsafe_check(display_failure) &
         AP_Arming::pre_arm_checks(display_failure);
 }
 
@@ -95,8 +96,9 @@ bool AP_Arming_Copter::compass_checks(bool display_failure)
     if ((checks_to_perform == ARMING_CHECK_ALL) || (checks_to_perform & ARMING_CHECK_COMPASS)) {
         // check compass offsets have been set.  AP_Arming only checks
         // this if learning is off; Copter *always* checks.
-        if (!AP::compass().configured()) {
-            check_failed(ARMING_CHECK_COMPASS, display_failure, "Compass not calibrated");
+        char failure_msg[50] = {};
+        if (!AP::compass().configured(failure_msg, ARRAY_SIZE(failure_msg))) {
+            check_failed(ARMING_CHECK_COMPASS, display_failure, "%s", failure_msg);
             ret = false;
         }
     }
@@ -171,7 +173,7 @@ bool AP_Arming_Copter::parameter_checks(bool display_failure)
         // acro balance parameter check
 #if MODE_ACRO_ENABLED == ENABLED || MODE_SPORT_ENABLED == ENABLED
         if ((copter.g.acro_balance_roll > copter.attitude_control->get_angle_roll_p().kP()) || (copter.g.acro_balance_pitch > copter.attitude_control->get_angle_pitch_p().kP())) {
-            check_failed(ARMING_CHECK_PARAMETERS, display_failure, "ACRO_BAL_ROLL/PITCH");
+            check_failed(ARMING_CHECK_PARAMETERS, display_failure, "Check ACRO_BAL_ROLL/PITCH");
             return false;
         }
 #endif
@@ -220,6 +222,12 @@ bool AP_Arming_Copter::parameter_checks(bool display_failure)
             copter.g2.frame_class.get() == AP_Motors::MOTOR_FRAME_HELI_DUAL ||
             copter.g2.frame_class.get() == AP_Motors::MOTOR_FRAME_HELI) {
             check_failed(ARMING_CHECK_PARAMETERS, display_failure, "Invalid MultiCopter FRAME_CLASS");
+            return false;
+        }
+
+        // checks MOT_PWM_MIN/MAX for acceptable values
+        if (!copter.motors->check_mot_pwm_params()) {
+            check_failed(ARMING_CHECK_PARAMETERS, display_failure, "Check MOT_PWM_MIN/MAX");
             return false;
         }
         #endif // HELI_FRAME
@@ -292,7 +300,7 @@ bool AP_Arming_Copter::motor_checks(bool display_failure)
 {
     // check motors initialised  correctly
     if (!copter.motors->initialised_ok()) {
-        check_failed(display_failure, "check firmware or FRAME_CLASS");
+        check_failed(display_failure, "Check firmware or FRAME_CLASS");
         return false;
     }
 
@@ -479,8 +487,9 @@ bool AP_Arming_Copter::proximity_checks(bool display_failure) const
     float angle_deg, distance;
     if (copter.avoid.proximity_avoidance_enabled() && copter.g2.proximity.get_closest_object(angle_deg, distance)) {
         // display error if something is within 60cm
-        if (distance <= 0.6f) {
-            check_failed(ARMING_CHECK_PARAMETERS, display_failure, "Proximity %d deg, %4.2fm", (int)angle_deg, (double)distance);
+        const float tolerance = 0.6f;
+        if (distance <= tolerance) {
+            check_failed(ARMING_CHECK_PARAMETERS, display_failure, "Proximity %d deg, %4.2fm (want <= %0.2fm)", (int)angle_deg, (double)distance, (double)tolerance);
             return false;
         }
     }
@@ -563,6 +572,15 @@ bool AP_Arming_Copter::mandatory_gps_checks(bool display_failure)
     return true;
 }
 
+// Check GCS failsafe
+bool AP_Arming_Copter::gcs_failsafe_check(bool display_failure)
+{
+    if (copter.failsafe.gcs) {
+        check_failed(display_failure, "GCS failsafe on");
+        return false;
+    }
+    return true;
+}
 
 // arm_checks - perform final checks before arming
 //  always called just before arming.  Return true if ok to arm
@@ -614,8 +632,8 @@ bool AP_Arming_Copter::arm_checks(AP_Arming::Method method)
     if (!rc().find_channel_for_option(RC_Channel::AUX_FUNC::MOTOR_ESTOP)){
         SRV_Channels::set_emergency_stop(false);
         // if we are using motor Estop switch, it must not be in Estop position
-    } else if (rc().find_channel_for_option(RC_Channel::AUX_FUNC::MOTOR_ESTOP) && SRV_Channels::get_emergency_stop()){
-        gcs().send_text(MAV_SEVERITY_CRITICAL,"Arm: Motor Emergency Stopped");
+    } else if (SRV_Channels::get_emergency_stop()){
+        check_failed(true, "Motor Emergency Stopped");
         return false;
     }
 
@@ -810,14 +828,14 @@ bool AP_Arming_Copter::arm(const AP_Arming::Method method, const bool do_arming_
 }
 
 // arming.disarm - disarm motors
-bool AP_Arming_Copter::disarm()
+bool AP_Arming_Copter::disarm(const AP_Arming::Method method)
 {
     // return immediately if we are already disarmed
     if (!copter.motors->armed()) {
         return true;
     }
 
-    if (!AP_Arming::disarm()) {
+    if (!AP_Arming::disarm(method)) {
         return false;
     }
 

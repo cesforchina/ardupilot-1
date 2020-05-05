@@ -93,6 +93,11 @@ COMMON_VEHICLE_DEPENDENT_LIBRARIES = [
     'AC_PID',
     'AP_SerialLED',
     'AP_EFI',
+    'AP_Hott_Telem',
+    'AP_ESC_Telem',
+    'AP_Stats',
+    'AP_GyroFFT',
+    'AP_RCTelemetry',
 ]
 
 def get_legacy_defines(sketch_name):
@@ -537,6 +542,13 @@ information across clean commands, so that that information is changed
 only when really necessary. Also, some tasks that don't really produce
 files persist their signature. This option avoids that behavior when
 cleaning the build.
+''')
+
+    g.add_option('--asan',
+        action='store_true',
+        help='''Build using the macOS clang Address Sanitizer. In order to run with
+Address Sanitizer support llvm-symbolizer is required to be on the PATH.
+This option is only supported on macOS versions of clang.
 ''')
 
 def build(bld):

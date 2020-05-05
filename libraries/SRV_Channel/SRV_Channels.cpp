@@ -123,7 +123,7 @@ const AP_Param::GroupInfo SRV_Channels::var_info[] = {
 
     // @Param: _AUTO_TRIM
     // @DisplayName: Automatic servo trim
-    // @Description: This enables automatic servo trim in flight. Servos will be trimed in stabilized flight modes when the aircraft is close to level. Changes to servo trim will be saved every 10 seconds and will persist between flights.
+    // @Description: This enables automatic servo trim in flight. Servos will be trimed in stabilized flight modes when the aircraft is close to level. Changes to servo trim will be saved every 10 seconds and will persist between flights. The automatic trim won't go more than 20% away from a centered trim.
     // @Values: 0:Disable,1:Enable
     // @User: Advanced
     AP_GROUPINFO_FRAME("_AUTO_TRIM",  17, SRV_Channels, auto_trim, 0, AP_PARAM_FRAME_PLANE),
@@ -271,8 +271,8 @@ void SRV_Channels::push()
                     continue;
                 }
                 ap_kdecan->update();
-                break;
 #endif
+                break;
             }
             case AP_BoardConfig_CAN::Protocol_Type_ToshibaCAN: {
                 AP_ToshibaCAN *ap_tcan = AP_ToshibaCAN::get_tcan(i);

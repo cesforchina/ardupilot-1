@@ -64,11 +64,11 @@ void UARTDriver::begin(uint32_t baud, uint16_t rxSpace, uint16_t txSpace)
     if (strcmp(path, "GPS1") == 0) {
         /* gps */
         _connected = true;
-        _fd = _sitlState->gps_pipe();
+        _fd = _sitlState->gps_pipe(0);
     } else if (strcmp(path, "GPS2") == 0) {
         /* 2nd gps */
         _connected = true;
-        _fd = _sitlState->gps2_pipe();
+        _fd = _sitlState->gps_pipe(1);
     } else {
         /* parse type:args:flags string for path. 
            For example:
@@ -768,6 +768,26 @@ uint64_t UARTDriver::receive_time_constraint_us(uint16_t nbytes)
         last_receive_us -= transport_time_us;
     }
     return last_receive_us;
+}
+
+ssize_t UARTDriver::get_system_outqueue_length() const
+{
+    if (!_connected) {
+        return 0;
+    }
+
+#if defined(__CYGWIN__) || defined(__CYGWIN64__) || defined(CYGWIN_BUILD)
+    return 0;
+#elif defined(__APPLE__) && defined(__MACH__)
+    return 0;
+#else
+    int size;
+    if (ioctl(_fd, TIOCOUTQ, &size) == -1) {
+        // ::fprintf(stderr, "ioctl TIOCOUTQ failed: %m\n");
+        return 0;
+    }
+    return size;
+#endif
 }
 
 #endif // CONFIG_HAL_BOARD

@@ -28,6 +28,7 @@ public:
     virtual void process_pulse(uint32_t width_s0, uint32_t width_s1) {}
     virtual void process_byte(uint8_t byte, uint32_t baudrate) {}
     uint16_t read(uint8_t chan);
+    void read(uint16_t *pwm, uint8_t n);
     bool new_input();
     uint8_t num_channels();
 
@@ -69,9 +70,11 @@ public:
     
 protected:
     void add_input(uint8_t num_channels, uint16_t *values, bool in_failsafe, int16_t rssi=-1);
+    AP_RCProtocol &frontend;
+
+    void log_data(AP_RCProtocol::rcprotocol_t prot, uint32_t timestamp, const uint8_t *data, uint8_t len) const;
 
 private:
-    AP_RCProtocol &frontend;
     uint32_t rc_input_count;
     uint32_t last_rc_input_count;
     uint32_t rc_frame_count;

@@ -258,7 +258,10 @@ bool I2CDevice::_transfer(const uint8_t *send, uint32_t send_len,
 {
     i2cAcquireBus(I2CD[bus.busnum].i2c);
 
-    bus.bouncebuffer_setup(send, send_len, recv, recv_len);
+    if (!bus.bouncebuffer_setup(send, send_len, recv, recv_len)) {
+        i2cReleaseBus(I2CD[bus.busnum].i2c);
+        return false;
+    }
 
     for(uint8_t i=0 ; i <= _retries; i++) {
         int ret;
@@ -291,7 +294,7 @@ bool I2CDevice::_transfer(const uint8_t *send, uint32_t send_len,
         bus.dma_handle->unlock();
 
         if (I2CD[bus.busnum].i2c->errors & I2C_ISR_LIMIT) {
-            AP::internalerror().error(AP_InternalError::error_t::i2c_isr);
+            INTERNAL_ERROR(AP_InternalError::error_t::i2c_isr);
             break;
         }
 

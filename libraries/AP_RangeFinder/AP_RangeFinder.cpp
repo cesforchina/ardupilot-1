@@ -42,6 +42,7 @@
 #include "AP_RangeFinder_BLPing.h"
 #include "AP_RangeFinder_UAVCAN.h"
 #include "AP_RangeFinder_Lanbao.h"
+#include "AP_RangeFinder_LeddarVu8.h"
 
 #include <AP_BoardConfig/AP_BoardConfig.h>
 #include <AP_Logger/AP_Logger.h>
@@ -87,7 +88,7 @@ const AP_Param::GroupInfo RangeFinder::var_info[] = {
 
     // @Group: 4_
     // @Path: AP_RangeFinder_Wasp.cpp
-    AP_SUBGROUPVARPTR(drivers[0], "4_",  60, RangeFinder, backend_var_info[3]),
+    AP_SUBGROUPVARPTR(drivers[3], "4_",  60, RangeFinder, backend_var_info[3]),
 #endif
 
 #if RANGEFINDER_MAX_INSTANCES > 4
@@ -223,7 +224,7 @@ void RangeFinder::convert_params(void) {
     info.old_key = 53;
 #elif APM_BUILD_TYPE(APM_BUILD_ArduSub)
     info.old_key = 35;
-#elif APM_BUILD_TYPE(APM_BUILD_APMrover2)
+#elif APM_BUILD_TYPE(APM_BUILD_Rover)
     info.old_key = 197;
 #else
     params[0].type.save(true);
@@ -496,6 +497,11 @@ void RangeFinder::detect_instance(uint8_t instance, uint8_t& serial_instance)
             drivers[instance] = new AP_RangeFinder_Lanbao(state[instance], params[instance], serial_instance++);
         }
         break;
+    case Type::LeddarVu8_Serial:
+        if (AP_RangeFinder_LeddarVu8::detect(serial_instance)) {
+            drivers[instance] = new AP_RangeFinder_LeddarVu8(state[instance], params[instance], serial_instance++);
+        }
+        break;
     default:
         break;
     }
@@ -504,6 +510,9 @@ void RangeFinder::detect_instance(uint8_t instance, uint8_t& serial_instance)
     if (drivers[instance] && state[instance].var_info) {
         backend_var_info[instance] = state[instance].var_info;
         AP_Param::load_object_from_eeprom(drivers[instance], backend_var_info[instance]);
+
+        // param count could have changed
+        AP_Param::invalidate_count();
     }
 }
 
