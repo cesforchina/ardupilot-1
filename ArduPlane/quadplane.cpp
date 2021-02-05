@@ -716,7 +716,7 @@ bool QuadPlane::setup(void)
     pos_control->set_dt(loop_delta_t);
     attitude_control->parameter_sanity_check();
 
-    // setup the trim of any motors used by AP_Motors so px4io
+    // setup the trim of any motors used by AP_Motors so I/O board
     // failsafe will disable motors
     for (uint8_t i=0; i<8; i++) {
         SRV_Channel::Aux_servo_function_t func = SRV_Channels::get_motor_function(i);
@@ -1090,6 +1090,9 @@ void QuadPlane::init_qland(void)
     poscontrol.state = QPOS_LAND_DESCEND;
     landing_detect.lower_limit_start_ms = 0;
     landing_detect.land_start_ms = 0;
+#if LANDING_GEAR_ENABLED == ENABLED
+    plane.g2.landing_gear.deploy_for_landing();
+#endif
 }
 
 
@@ -1491,7 +1494,7 @@ void QuadPlane::update_transition(void)
         (transition_failure > 0) &&
         ((now - transition_start_ms) > ((uint32_t)transition_failure * 1000))) {
         gcs().send_text(MAV_SEVERITY_CRITICAL, "Transition failed, exceeded time limit");
-        plane.set_mode(plane.mode_qland, MODE_REASON_VTOL_FAILED_TRANSITION);
+        plane.set_mode(plane.mode_qland, ModeReason::VTOL_FAILED_TRANSITION);
     }
 
     float aspeed;
@@ -1602,7 +1605,7 @@ void QuadPlane::update_transition(void)
         plane.rollController.reset_I();
 
         // give full authority to attitude control
-        attitude_control->set_throttle_mix_max();
+        attitude_control->set_throttle_mix_max(1.0f);
         break;
     }
         
@@ -1920,9 +1923,18 @@ void QuadPlane::motors_output(bool run_rate_controller)
     
     motors->output();
     if (motors->armed() && motors->get_spool_state() != AP_Motors::SpoolState::SHUT_DOWN) {
-        plane.logger.Write_Rate(ahrs_view, *motors, *attitude_control, *pos_control);
-        Log_Write_QControl_Tuning();
         const uint32_t now = AP_HAL::millis();
+
+        // log RATE at main loop rate
+        plane.logger.Write_Rate(ahrs_view, *motors, *attitude_control, *pos_control);
+
+        // log QTUN at 25 Hz
+        if (now - last_qtun_log_ms > 40) {
+            last_qtun_log_ms = now;
+            Log_Write_QControl_Tuning();
+        }
+
+        // log CTRL at 10 Hz
         if (now - last_ctrl_log_ms > 100) {
             last_ctrl_log_ms = now;
             attitude_control->control_monitor_log();
@@ -2355,6 +2367,10 @@ void QuadPlane::setup_target_position(void)
     // setup vertical speed and acceleration
     pos_control->set_max_speed_z(-pilot_velocity_z_max, pilot_velocity_z_max);
     pos_control->set_max_accel_z(pilot_accel_z);
+
+    // setup horizontal speed and acceleration
+    pos_control->set_max_speed_xy(wp_nav->get_default_speed_xy());
+    pos_control->set_max_accel_xy(wp_nav->get_wp_acceleration());
 }
 
 /*
@@ -2422,7 +2438,7 @@ void QuadPlane::waypoint_controller(void)
 /*
   handle auto-mode when auto_state.vtol_mode is true
  */
-void QuadPlane::control_auto(const Location &loc)
+void QuadPlane::control_auto(void)
 {
     if (!setup()) {
         return;
@@ -2602,13 +2618,13 @@ bool QuadPlane::verify_vtol_takeoff(const AP_Mission::Mission_Command &cmd)
     // check for failure conditions
     if (is_positive(takeoff_failure_scalar) && ((now - takeoff_start_time_ms) > takeoff_time_limit_ms)) {
         gcs().send_text(MAV_SEVERITY_CRITICAL, "Failed to complete takeoff within time limit");
-        plane.set_mode(plane.mode_qland, MODE_REASON_VTOL_FAILED_TAKEOFF);
+        plane.set_mode(plane.mode_qland, ModeReason::VTOL_FAILED_TAKEOFF);
         return false;
     }
 
     if (is_positive(maximum_takeoff_airspeed) && (plane.airspeed.get_airspeed() > maximum_takeoff_airspeed)) {
         gcs().send_text(MAV_SEVERITY_CRITICAL, "Failed to complete takeoff, excessive wind");
-        plane.set_mode(plane.mode_qland, MODE_REASON_VTOL_FAILED_TAKEOFF);
+        plane.set_mode(plane.mode_qland, ModeReason::VTOL_FAILED_TAKEOFF);
         return false;
     }
 
@@ -2620,6 +2636,13 @@ bool QuadPlane::verify_vtol_takeoff(const AP_Mission::Mission_Command &cmd)
     set_alt_target_current();
 
     plane.complete_auto_takeoff();
+
+    if (plane.control_mode == &plane.mode_auto) {
+        // we reset TECS so that the target height filter is not
+        // constrained by the climb and sink rates from the initial
+        // takeoff height.
+        plane.SpdHgt_Controller->reset();
+    }
     
     return true;
 }
@@ -2707,6 +2730,9 @@ bool QuadPlane::verify_vtol_land(void)
     if (poscontrol.state == QPOS_POSITION2 &&
         plane.auto_state.wp_distance < 2) {
         poscontrol.state = QPOS_LAND_DESCEND;
+#if LANDING_GEAR_ENABLED == ENABLED
+        plane.g2.landing_gear.deploy_for_landing();
+#endif
         gcs().send_text(MAV_SEVERITY_INFO,"Land descend started");
         if (plane.control_mode == &plane.mode_auto) {
             // set height to mission height, so we can use the mission
@@ -2962,6 +2988,11 @@ bool QuadPlane::guided_mode_enabled(void)
     if (plane.control_mode != &plane.mode_guided && plane.control_mode != &plane.mode_auto) {
         return false;
     }
+    if (plane.control_mode == &plane.mode_auto &&
+        plane.mission.get_current_nav_cmd().id == MAV_CMD_NAV_LOITER_TURNS) {
+        // loiter turns is a fixed wing only operation
+        return false;
+    }
     return guided_mode != 0;
 }
 
@@ -3085,7 +3116,7 @@ float QuadPlane::stopping_distance(void)
 #define LAND_CHECK_LARGE_ANGLE_CD   1500.0f     // maximum angle target to be considered landing
 #define LAND_CHECK_ACCEL_MOVING     3.0f        // maximum acceleration after subtracting gravity
 
-void QuadPlane::update_throttle_thr_mix(void)
+void QuadPlane::update_throttle_mix(void)
 {
     // transition will directly manage the mix
     if (in_transition()) {
@@ -3093,7 +3124,7 @@ void QuadPlane::update_throttle_thr_mix(void)
     }
 
     // if disarmed or landed prioritise throttle
-    if(!motors->armed()) {
+    if (!motors->armed()) {
         attitude_control->set_throttle_mix_min();
         return;
     }
@@ -3124,8 +3155,8 @@ void QuadPlane::update_throttle_thr_mix(void)
         // check for requested decent
         bool descent_not_demanded = pos_control->get_desired_velocity().z >= 0.0f;
 
-        if ( large_angle_request || large_angle_error || accel_moving || descent_not_demanded) {
-            attitude_control->set_throttle_mix_max();
+        if (large_angle_request || large_angle_error || accel_moving || descent_not_demanded) {
+            attitude_control->set_throttle_mix_max(1.0);
         } else {
             attitude_control->set_throttle_mix_min();
         }

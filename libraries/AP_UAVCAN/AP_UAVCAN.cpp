@@ -32,12 +32,14 @@
 #include <uavcan/equipment/actuator/Status.hpp>
 
 #include <uavcan/equipment/esc/RawCommand.hpp>
+#include <uavcan/equipment/esc/Status.hpp>
 #include <uavcan/equipment/indication/LightsCommand.hpp>
 #include <uavcan/equipment/indication/SingleLightCommand.hpp>
 #include <uavcan/equipment/indication/BeepCommand.hpp>
 #include <uavcan/equipment/indication/RGB565.hpp>
 #include <ardupilot/indication/SafetyState.hpp>
 #include <ardupilot/indication/Button.hpp>
+#include <ardupilot/equipment/trafficmonitor/TrafficReport.hpp>
 #include <uavcan/equipment/gnss/RTCMStream.hpp>
 
 #include <AP_Baro/AP_Baro_UAVCAN.h>
@@ -48,6 +50,9 @@
 #include <AP_Airspeed/AP_Airspeed_UAVCAN.h>
 #include <SRV_Channel/SRV_Channel.h>
 #include <AP_OpticalFlow/AP_OpticalFlow_HereFlow.h>
+#include <AP_ADSB/AP_ADSB.h>
+#include "AP_UAVCAN_Server.h"
+#include <AP_Logger/AP_Logger.h>
 
 #define LED_DELAY_US 50000
 
@@ -107,9 +112,23 @@ static uavcan::Publisher<ardupilot::indication::SafetyState>* safety_state[MAX_N
 static uavcan::Publisher<uavcan::equipment::gnss::RTCMStream>* rtcm_stream[MAX_NUMBER_OF_CAN_DRIVERS];
 
 // subscribers
+
 // handler SafteyButton
 UC_REGISTRY_BINDER(ButtonCb, ardupilot::indication::Button);
 static uavcan::Subscriber<ardupilot::indication::Button, ButtonCb> *safety_button_listener[MAX_NUMBER_OF_CAN_DRIVERS];
+
+// handler TrafficReport
+UC_REGISTRY_BINDER(TrafficReportCb, ardupilot::equipment::trafficmonitor::TrafficReport);
+static uavcan::Subscriber<ardupilot::equipment::trafficmonitor::TrafficReport, TrafficReportCb> *traffic_report_listener[MAX_NUMBER_OF_CAN_DRIVERS];
+
+// handler actuator status
+UC_REGISTRY_BINDER(ActuatorStatusCb, uavcan::equipment::actuator::Status);
+static uavcan::Subscriber<uavcan::equipment::actuator::Status, ActuatorStatusCb> *actuator_status_listener[MAX_NUMBER_OF_CAN_DRIVERS];
+
+// handler ESC status
+UC_REGISTRY_BINDER(ESCStatusCb, uavcan::equipment::esc::Status);
+static uavcan::Subscriber<uavcan::equipment::esc::Status, ESCStatusCb> *esc_status_listener[MAX_NUMBER_OF_CAN_DRIVERS];
+
 
 AP_UAVCAN::AP_UAVCAN() :
     _node_allocator()
@@ -198,7 +217,12 @@ void AP_UAVCAN::init(uint8_t driver_index, bool enable_filters)
     uint8_t uid_len = uid_buf_len;
     uint8_t unique_id[uid_buf_len];
 
+
     if (hal.util->get_system_id_unformatted(unique_id, uid_len)) {
+        //This is because we are maintaining a common Server Record for all UAVCAN Instances.
+        //In case the node IDs are different, and unique id same, it will create
+        //conflict in the Server Record.
+        unique_id[uid_len - 1] += _uavcan_node;
         uavcan::copy(unique_id, unique_id + uid_len, hw_version.unique_id.begin());
     }
     _node->setHardwareVersion(hw_version);
@@ -210,10 +234,13 @@ void AP_UAVCAN::init(uint8_t driver_index, bool enable_filters)
     }
 
     //Start Servers
-#ifdef HAS_UAVCAN_SERVERS
-    _servers.init(*_node);
-#endif
+    if (!AP::uavcan_server().init(this)) {
+        debug_uavcan(1, "UAVCAN: Failed to start DNA Server\n\r");
+        return;
+    }
+
     // Roundup all subscribers from supported drivers
+    AP_UAVCAN_Server::subscribe_msgs(this);
     AP_GPS_UAVCAN::subscribe_msgs(this);
     AP_Compass_UAVCAN::subscribe_msgs(this);
     AP_Baro_UAVCAN::subscribe_msgs(this);
@@ -251,6 +278,21 @@ void AP_UAVCAN::init(uint8_t driver_index, bool enable_filters)
         safety_button_listener[driver_index]->start(ButtonCb(this, &handle_button));
     }
 
+    traffic_report_listener[driver_index] = new uavcan::Subscriber<ardupilot::equipment::trafficmonitor::TrafficReport, TrafficReportCb>(*_node);
+    if (traffic_report_listener[driver_index]) {
+        traffic_report_listener[driver_index]->start(TrafficReportCb(this, &handle_traffic_report));
+    }
+
+    actuator_status_listener[driver_index] = new uavcan::Subscriber<uavcan::equipment::actuator::Status, ActuatorStatusCb>(*_node);
+    if (actuator_status_listener[driver_index]) {
+        actuator_status_listener[driver_index]->start(ActuatorStatusCb(this, &handle_actuator_status));
+    }
+
+    esc_status_listener[driver_index] = new uavcan::Subscriber<uavcan::equipment::esc::Status, ESCStatusCb>(*_node);
+    if (esc_status_listener[driver_index]) {
+        esc_status_listener[driver_index]->start(ESCStatusCb(this, &handle_ESC_status));
+    }
+    
     _led_conf.devices_count = 0;
     if (enable_filters) {
         configureCanAcceptanceFilters(*_node);
@@ -323,6 +365,7 @@ void AP_UAVCAN::loop(void)
         buzzer_send();
         rtcm_stream_send();
         safety_state_send();
+        AP::uavcan_server().verify_nodes(this);
     }
 }
 
@@ -620,6 +663,104 @@ void AP_UAVCAN::handle_button(AP_UAVCAN* ap_uavcan, uint8_t node_id, const Butto
         break;
     }
     }
+}
+
+/*
+  handle traffic report
+ */
+void AP_UAVCAN::handle_traffic_report(AP_UAVCAN* ap_uavcan, uint8_t node_id, const TrafficReportCb &cb)
+{
+    AP_ADSB *adsb = AP::ADSB();
+    if (!adsb || !adsb->enabled()) {
+        // ADSB not enabled
+        return;
+    }
+
+    const ardupilot::equipment::trafficmonitor::TrafficReport &msg = cb.msg[0];
+    AP_ADSB::adsb_vehicle_t vehicle;
+    mavlink_adsb_vehicle_t &pkt = vehicle.info;
+
+    pkt.ICAO_address = msg.icao_address;
+    pkt.tslc = msg.tslc;
+    pkt.lat = msg.latitude_deg_1e7;
+    pkt.lon = msg.longitude_deg_1e7;
+    pkt.altitude = msg.alt_m * 1000;
+    pkt.heading = degrees(msg.heading) * 100;
+    pkt.hor_velocity = norm(msg.velocity[0], msg.velocity[1]) * 100;
+    pkt.ver_velocity = -msg.velocity[2] * 100;
+    pkt.squawk = msg.squawk;
+    for (uint8_t i=0; i<9; i++) {
+        pkt.callsign[i] = msg.callsign[i];
+    }
+    pkt.emitter_type = msg.traffic_type;
+
+    if (msg.alt_type == ardupilot::equipment::trafficmonitor::TrafficReport::ALT_TYPE_PRESSURE_AMSL) {
+        pkt.flags |= ADSB_FLAGS_VALID_ALTITUDE;
+        pkt.altitude_type = ADSB_ALTITUDE_TYPE_PRESSURE_QNH;
+    } else if (msg.alt_type == ardupilot::equipment::trafficmonitor::TrafficReport::ALT_TYPE_WGS84) {
+        pkt.flags |= ADSB_FLAGS_VALID_ALTITUDE;
+        pkt.altitude_type = ADSB_ALTITUDE_TYPE_GEOMETRIC;
+    }
+
+    if (msg.lat_lon_valid) {
+        pkt.flags |= ADSB_FLAGS_VALID_COORDS;
+    }
+    if (msg.heading_valid) {
+        pkt.flags |= ADSB_FLAGS_VALID_HEADING;
+    }
+    if (msg.velocity_valid) {
+        pkt.flags |= ADSB_FLAGS_VALID_VELOCITY;
+    }
+    if (msg.callsign_valid) {
+        pkt.flags |= ADSB_FLAGS_VALID_CALLSIGN;
+    }
+    if (msg.ident_valid) {
+        pkt.flags |= ADSB_FLAGS_VALID_SQUAWK;
+    }
+    if (msg.simulated_report) {
+        pkt.flags |= ADSB_FLAGS_SIMULATED;
+    }
+    // flags not in common.xml yet
+    if (msg.vertical_velocity_valid) {
+        pkt.flags |= 0x80;
+    }
+    if (msg.baro_valid) {
+        pkt.flags |= 0x100;
+    }
+
+    vehicle.last_update_ms = AP_HAL::millis() - (vehicle.info.tslc * 1000);
+    adsb->handle_adsb_vehicle(vehicle);
+}
+
+/*
+  handle actuator status message
+ */
+void AP_UAVCAN::handle_actuator_status(AP_UAVCAN* ap_uavcan, uint8_t node_id, const ActuatorStatusCb &cb)
+{
+    // log as CSRV message
+    AP::logger().Write_ServoStatus(AP_HAL::micros64(),
+                                   cb.msg->actuator_id,
+                                   cb.msg->position,
+                                   cb.msg->force,
+                                   cb.msg->speed,
+                                   cb.msg->power_rating_pct);
+}
+
+/*
+  handle ESC status message
+ */
+void AP_UAVCAN::handle_ESC_status(AP_UAVCAN* ap_uavcan, uint8_t node_id, const ESCStatusCb &cb)
+{
+    // log as CESC message
+    AP::logger().Write_ESCStatus(AP_HAL::micros64(),
+                                 cb.msg->esc_index,
+                                 cb.msg->error_count,
+                                 cb.msg->voltage,
+                                 cb.msg->current,
+                                 cb.msg->temperature - C_TO_KELVIN,
+                                 cb.msg->rpm,
+                                 cb.msg->power_rating_pct);
+
 }
 
 #endif // HAL_WITH_UAVCAN

@@ -86,7 +86,7 @@ const AP_Param::GroupInfo RangeFinder::var_info[] = {
 
     // @Group: 4_
     // @Path: AP_RangeFinder_Wasp.cpp
-    AP_SUBGROUPVARPTR(drivers[0], "4_",  60, RangeFinder, backend_var_info[3]),
+    AP_SUBGROUPVARPTR(drivers[3], "4_",  60, RangeFinder, backend_var_info[3]),
 #endif
 
 #if RANGEFINDER_MAX_INSTANCES > 4
@@ -298,8 +298,9 @@ void RangeFinder::update(void)
             drivers[i]->update();
         }
     }
-
+#ifndef HAL_BUILD_AP_PERIPH
     Log_RFND();
+#endif
 }
 
 bool RangeFinder::_add_backend(AP_RangeFinder_Backend *backend)
@@ -390,11 +391,13 @@ void RangeFinder::detect_instance(uint8_t instance, uint8_t& serial_instance)
         break;
 #if CONFIG_HAL_BOARD == HAL_BOARD_CHIBIOS
     case RangeFinder_TYPE_PX4_PWM:
+#ifndef HAL_BUILD_AP_PERIPH
         // to ease moving from PX4 to ChibiOS we'll lie a little about
         // the backend driver...
         if (AP_RangeFinder_PWM::detect()) {
             drivers[instance] = new AP_RangeFinder_PWM(state[instance], params[instance], estimated_terrain_height);
         }
+#endif
         break;
 #endif
 #if CONFIG_HAL_BOARD_SUBTYPE == HAL_BOARD_SUBTYPE_LINUX_BBBMINI
@@ -428,9 +431,11 @@ void RangeFinder::detect_instance(uint8_t instance, uint8_t& serial_instance)
         break;
 #endif
     case RangeFinder_TYPE_MAVLink:
+#ifndef HAL_BUILD_AP_PERIPH
         if (AP_RangeFinder_MAVLink::detect()) {
             drivers[instance] = new AP_RangeFinder_MAVLink(state[instance], params[instance]);
         }
+#endif
         break;
     case RangeFinder_TYPE_MBSER:
         if (AP_RangeFinder_MaxsonarSerialLV::detect(serial_instance)) {
@@ -438,10 +443,12 @@ void RangeFinder::detect_instance(uint8_t instance, uint8_t& serial_instance)
         }
         break;
     case RangeFinder_TYPE_ANALOG:
+#ifndef HAL_BUILD_AP_PERIPH
         // note that analog will always come back as present if the pin is valid
         if (AP_RangeFinder_analog::detect(params[instance])) {
             drivers[instance] = new AP_RangeFinder_analog(state[instance], params[instance]);
         }
+#endif
         break;
     case RangeFinder_TYPE_NMEA:
         if (AP_RangeFinder_NMEA::detect(serial_instance)) {
@@ -463,10 +470,17 @@ void RangeFinder::detect_instance(uint8_t instance, uint8_t& serial_instance)
             drivers[instance] = new AP_RangeFinder_Benewake(state[instance], params[instance], serial_instance++, AP_RangeFinder_Benewake::BENEWAKE_TFmini);
         }
         break;
+    case RangeFinder_TYPE_BenewakeTF03:
+        if (AP_RangeFinder_Benewake::detect(serial_instance)) {
+            drivers[instance] = new AP_RangeFinder_Benewake(state[instance], params[instance], serial_instance++, AP_RangeFinder_Benewake::BENEWAKE_TF03);
+        }
+        break;
     case RangeFinder_TYPE_PWM:
+#ifndef HAL_BUILD_AP_PERIPH
         if (AP_RangeFinder_PWM::detect()) {
             drivers[instance] = new AP_RangeFinder_PWM(state[instance], params[instance], estimated_terrain_height);
         }
+#endif
         break;
     case RangeFinder_TYPE_BLPing:
         if (AP_RangeFinder_BLPing::detect(serial_instance)) {
