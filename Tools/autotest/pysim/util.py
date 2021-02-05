@@ -24,6 +24,10 @@ else:
 
 RADIUS_OF_EARTH = 6378100.0  # in meters
 
+
+# List of open terminal windows for macosx
+windowID = []
+
 def m2ft(x):
     """Meters to feet."""
     return float(x) / 0.3048
@@ -173,6 +177,9 @@ def pexpect_close(p):
     global close_list
 
     ex = None
+    if p is None:
+        print("Nothing to close")
+        return
     try:
         p.kill(signal.SIGTERM)
     except IOError as e:
@@ -233,6 +240,13 @@ def kill_screen_gdb():
     cmd = ["screen", "-X", "-S", "ardupilot-gdb", "quit"]
     subprocess.Popen(cmd)
 
+def kill_mac_terminal():
+    global windowID
+    for window in windowID:
+        cmd = ("osascript -e \'tell application \"Terminal\" to close "
+            "(window(get index of window id %s))\'" % window)
+        os.system(cmd)
+
 def start_SITL(binary,
                valgrind=False,
                gdb=False,
@@ -246,7 +260,6 @@ def start_SITL(binary,
                gdbserver=False,
                breakpoints=[],
                disable_breakpoints=False,
-               vicon=False,
                customisations=[],
                lldb=False):
 
@@ -285,13 +298,16 @@ def start_SITL(binary,
                     'bash -c "gdb -x /tmp/x.gdb"')
     elif gdb:
         f = open("/tmp/x.gdb", "w")
+        f.write("set pagination off\n")
         for breakpoint in breakpoints:
             f.write("b %s\n" % (breakpoint,))
         if disable_breakpoints:
             f.write("disable\n")
         f.write("r\n")
         f.close()
-        if os.environ.get('DISPLAY'):
+        if sys.platform == "darwin" and os.getenv('DISPLAY'):
+            cmd.extend(['gdb', '-x', '/tmp/x.gdb', '--args'])
+        elif os.environ.get('DISPLAY'):
             cmd.extend(['xterm', '-e', 'gdb', '-x', '/tmp/x.gdb', '--args'])
         else:
             cmd.extend(['screen',
@@ -309,7 +325,9 @@ def start_SITL(binary,
         f.write("settings set target.process.stop-on-exec false\n")
         f.write("process launch\n")
         f.close()
-        if os.environ.get('DISPLAY'):
+        if sys.platform == "darwin" and os.getenv('DISPLAY'):
+            cmd.extend(['lldb', '-s', '/tmp/x.lldb', '--'])
+        elif os.environ.get('DISPLAY'):
             cmd.extend(['xterm', '-e', 'lldb', '-s','/tmp/x.lldb', '--'])
         else:
             raise RuntimeError("DISPLAY was not set")
@@ -326,15 +344,47 @@ def start_SITL(binary,
         cmd.extend(['--speedup', str(speedup)])
     if defaults_filepath is not None:
         if type(defaults_filepath) == list:
-            defaults_filepath = ",".join(defaults_filepath)
-        cmd.extend(['--defaults', defaults_filepath])
+            if len(defaults_filepath):
+                cmd.extend(['--defaults', ",".join(defaults_filepath)])
+        else:
+            cmd.extend(['--defaults', defaults_filepath])
     if unhide_parameters:
         cmd.extend(['--unhide-groups'])
-    if vicon:
-        cmd.extend(["--uartF=sim:vicon:"])
     cmd.extend(customisations)
 
-    if gdb and not os.getenv('DISPLAY'):
+    # somewhere for MAVProxy to connect to:
+    cmd.append('--uartC=tcp:2')
+
+    if (gdb or lldb) and sys.platform == "darwin" and os.getenv('DISPLAY'):
+        global windowID
+        # on MacOS record the window IDs so we can close them later
+        atexit.register(kill_mac_terminal)
+        child = None
+        mydir = os.path.dirname(os.path.realpath(__file__))
+        autotest_dir = os.path.realpath(os.path.join(mydir, '..'))
+        runme = [os.path.join(autotest_dir, "run_in_terminal_window.sh"), 'mactest']
+        runme.extend(cmd) 
+        print(runme)
+        print(cmd)
+        out = subprocess.Popen(runme, stdout=subprocess.PIPE).communicate()[0]
+        out = out.decode('utf-8')
+        p = re.compile('tab 1 of window id (.*)')
+
+        tstart = time.time()
+        while time.time() - tstart < 5:
+            tabs = p.findall(out)
+
+            if len(tabs) > 0:
+                break
+
+            time.sleep(0.1)
+        # sleep for extra 2 seconds for application to start
+        time.sleep(2)
+        if len(tabs) > 0:
+            windowID.append(tabs[0])
+        else:
+            print("Cannot find %s process terminal" % binary)
+    elif gdb and not os.getenv('DISPLAY'):
         subprocess.Popen(cmd)
         atexit.register(kill_screen_gdb)
         # we are expected to return a pexpect wrapped around the
@@ -345,13 +395,14 @@ def start_SITL(binary,
                              logfile=sys.stdout,
                              encoding=ENCODING,
                              timeout=5)
+    else:
+        print("Running: %s" % cmd_as_shell(cmd))
 
-    print("Running: %s" % cmd_as_shell(cmd))
 
-    first = cmd[0]
-    rest = cmd[1:]
-    child = pexpect.spawn(first, rest, logfile=sys.stdout, encoding=ENCODING, timeout=5)
-    pexpect_autoclose(child)
+        first = cmd[0]
+        rest = cmd[1:]
+        child = pexpect.spawn(first, rest, logfile=sys.stdout, encoding=ENCODING, timeout=5)
+        pexpect_autoclose(child)
     # give time for parameters to properly setup
     time.sleep(3)
     if gdb or lldb:
@@ -362,7 +413,7 @@ def start_SITL(binary,
         # TODO: have a SITL-compiled ardupilot able to have its
         # console on an output fd.
     else:
-        child.expect('Waiting for connection', timeout=300)
+        child.expect('Waiting for ', timeout=300)
     return child
 
 
@@ -380,7 +431,7 @@ def MAVProxy_version():
         raise ValueError("Unable to determine MAVProxy version from (%s)" % output)
     return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
-def start_MAVProxy_SITL(atype, aircraft=None, setup=False, master='tcp:127.0.0.1:5760',
+def start_MAVProxy_SITL(atype, aircraft=None, setup=False, master='tcp:127.0.0.1:5762',
                         options=[], logfile=sys.stdout):
     """Launch mavproxy connected to a SITL instance."""
     local_mp_modules_dir = os.path.abspath(
@@ -396,7 +447,6 @@ def start_MAVProxy_SITL(atype, aircraft=None, setup=False, master='tcp:127.0.0.1
     cmd = []
     cmd.append(mavproxy_cmd())
     cmd.extend(['--master', master])
-    cmd.extend(['--out', '127.0.0.1:14550'])
     if setup:
         cmd.append('--setup')
     if aircraft is None:
@@ -711,6 +761,19 @@ def constrain(value, minv, maxv):
     if value > maxv:
         value = maxv
     return value
+
+def load_local_module(fname):
+    '''load a python module from within the ardupilot tree'''
+    fname = os.path.join(topdir(), fname)
+    if sys.version_info.major >= 3:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("local_module", fname)
+        ret = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ret)
+    else:
+        import imp
+        ret = imp.load_source("local_module", fname)
+    return ret
 
 
 if __name__ == "__main__":
