@@ -39,7 +39,7 @@ env OPTIMIZE -O2
 FLASH_RESERVE_START_KB 96
 
 # use FRAM for storage
-define HAL_STORAGE_SIZE 16384
+define HAL_STORAGE_SIZE 32768
 define HAL_WITH_RAMTRON 1
 
 # fallback storage in case FRAM is not populated
@@ -199,8 +199,6 @@ PD14 TIM4_CH3 TIM4 PWM(6) GPIO(55)
 PI5  TIM8_CH1 TIM8 PWM(7) GPIO(56)
 PI6  TIM8_CH2 TIM8 PWM(8) GPIO(57)
 
-define BOARD_PWM_COUNT_DEFAULT 8
-
 # This is the invensense data-ready pin. We don't use it in the
 # default driver.
 PD15 MPU_DRDY INPUT
@@ -264,7 +262,7 @@ IMU Invensensev2 SPI:icm20948 ROTATION_ROLL_180_YAW_90
 define HAL_DEFAULT_INS_FAST_SAMPLE 7
 
 # 1 baro
-BARO DPS280      SPI:dps310
+BARO DPS310      SPI:dps310
 
 # 1 compass
 COMPASS AK09916:probe_ICM20948 0 ROTATION_ROLL_180

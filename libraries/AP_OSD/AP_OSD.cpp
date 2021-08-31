@@ -26,6 +26,7 @@
 #include "AP_OSD_SITL.h"
 #endif
 #include "AP_OSD_MSP.h"
+#include "AP_OSD_MSP_DisplayPort.h"
 #include <AP_HAL/AP_HAL.h>
 #include <AP_HAL/Util.h>
 #include <RC_Channel/RC_Channel.h>
@@ -33,6 +34,10 @@
 #include <AP_BattMonitor/AP_BattMonitor.h>
 #include <utility>
 #include <AP_Notify/AP_Notify.h>
+#include <AP_Terrain/AP_Terrain.h>
+
+// macro for easy use of var_info2
+#define AP_SUBGROUPINFO2(element, name, idx, thisclazz, elclazz) { AP_PARAM_GROUP, idx, name, AP_VAROFFSET(thisclazz, element), { group_info : elclazz::var_info2 }, AP_PARAM_FLAG_NESTED_OFFSET }
 
 const AP_Param::GroupInfo AP_OSD::var_info[] = {
 
@@ -78,7 +83,7 @@ const AP_Param::GroupInfo AP_OSD::var_info[] = {
     // @Param: _OPTIONS
     // @DisplayName: OSD Options
     // @Description: This sets options that change the display
-    // @Bitmask: 0:UseDecimalPack, 1:InvertedWindPointer, 2:InvertedAHRoll
+    // @Bitmask: 0:UseDecimalPack, 1:InvertedWindPointer, 2:InvertedAHRoll, 3:Convert feet to miles at 5280ft instead of 10000ft, 4:DisableCrosshair
     // @User: Standard
     AP_GROUPINFO("_OPTIONS", 8, AP_OSD, options, OPTION_DECIMAL_PACK),
 
@@ -169,8 +174,38 @@ const AP_Param::GroupInfo AP_OSD::var_info[] = {
     // @User: Advanced
     AP_GROUPINFO("_BTN_DELAY", 20, AP_OSD, button_delay_ms, 300),
 #endif
-
+#if AP_TERRAIN_AVAILABLE
+    // @Param: _W_TERR
+    // @DisplayName: Terrain warn level
+    // @Description: Set level below which TER_HGT item will flash. -1 disables.
+    // @Range: -1 3000
+    // @Units: m
+    // @User: Standard
+    AP_GROUPINFO("_W_TERR", 23, AP_OSD, warn_terr, -1),
 #endif
+
+    // @Param: _W_AVGCELLV
+    // @DisplayName: AVGCELLV warn level
+    // @Description: Set level at which AVGCELLV item will flash
+    // @Range: 0 100
+    // @User: Standard
+    AP_GROUPINFO("_W_AVGCELLV", 24, AP_OSD, warn_avgcellvolt, 3.6f),
+
+   // @Param: _CELL_COUNT
+    // @DisplayName: Battery cell count
+    // @Description: Used for average cell voltage display. -1 disables, 0 uses cell count autodetection for well charged LIPO/LIION batteries at connection, other values manually select cell count used.
+    // @Increment: 1
+    // @User: Advanced
+    AP_GROUPINFO("_CELL_COUNT", 25, AP_OSD, cell_count, -1),
+
+    // @Param: _W_RESTVOLT
+    // @DisplayName: RESTVOLT warn level
+    // @Description: Set level at which RESTVOLT item will flash
+    // @Range: 0 100
+    // @User: Standard
+    AP_GROUPINFO("_W_RESTVOLT", 26, AP_OSD, warn_restvolt, 10.0f),
+
+#endif //osd enabled
 #if OSD_PARAM_ENABLED
     // @Group: 5_
     // @Path: AP_OSD_ParamScreen.cpp
@@ -180,6 +215,13 @@ const AP_Param::GroupInfo AP_OSD::var_info[] = {
     // @Path: AP_OSD_ParamScreen.cpp
     AP_SUBGROUPINFO(param_screen[1], "6_", 22, AP_OSD, AP_OSD_ParamScreen),
 #endif
+
+    // additional tables to go beyond 63 limit
+    AP_SUBGROUPINFO2(screen[0], "1_", 27, AP_OSD, AP_OSD_Screen),
+    AP_SUBGROUPINFO2(screen[1], "2_", 28, AP_OSD, AP_OSD_Screen),
+    AP_SUBGROUPINFO2(screen[2], "3_", 29, AP_OSD, AP_OSD_Screen),
+    AP_SUBGROUPINFO2(screen[3], "4_", 30, AP_OSD, AP_OSD_Screen),
+
     AP_GROUPEND
 };
 
@@ -250,11 +292,23 @@ void AP_OSD::init()
         hal.console->printf("Started MSP OSD\n");
         break;
     }
+#if HAL_WITH_MSP_DISPLAYPORT
+    case OSD_MSP_DISPLAYPORT: {
+        backend = AP_OSD_MSP_DisplayPort::probe(*this);
+        if (backend == nullptr) {
+            break;
+        }
+        hal.console->printf("Started MSP DisplayPort OSD\n");
+        break;
+    }
+#endif
     }
 #if OSD_ENABLED
     if (backend != nullptr && (enum osd_types)osd_type.get() != OSD_MSP) {
+        // populate the fonts lookup table
+        backend->init_symbol_set(AP_OSD_AbstractScreen::symbols_lookup_table, AP_OSD_NUM_SYMBOLS);
         // create thread as higher priority than IO for all backends but MSP which has its own
-        hal.scheduler->thread_create(FUNCTOR_BIND_MEMBER(&AP_OSD::osd_thread, void), "OSD", 1024, AP_HAL::Scheduler::PRIORITY_IO, 1);
+        hal.scheduler->thread_create(FUNCTOR_BIND_MEMBER(&AP_OSD::osd_thread, void), "OSD", 1280, AP_HAL::Scheduler::PRIORITY_IO, 1);
     }
 #endif
 }
@@ -392,8 +446,11 @@ void AP_OSD::update_current_screen()
     case PWM_RANGE:
         for (int i=0; i<AP_OSD_NUM_SCREENS; i++) {
             if (get_screen(i).enabled && get_screen(i).channel_min <= channel_value && get_screen(i).channel_max > channel_value) {
+                if (previous_pwm_screen == i) {
+                    break;
+                } else {
                 current_screen = previous_pwm_screen = i;
-                break;
+                }
             }
         }
         break;

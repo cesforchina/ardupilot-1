@@ -41,10 +41,11 @@
 #include <AP_ESC_Telem/AP_ESC_Telem.h>
 #include <AP_GyroFFT/AP_GyroFFT.h>
 #include <AP_VisualOdom/AP_VisualOdom.h>
-#include <AP_RCTelemetry/AP_VideoTX.h>
+#include <AP_VideoTX/AP_VideoTX.h>
 #include <AP_MSP/AP_MSP.h>
 #include <AP_Frsky_Telem/AP_Frsky_Parameters.h>
 #include <AP_ExternalAHRS/AP_ExternalAHRS.h>
+#include <AP_VideoTX/AP_SmartAudio.h>
 
 class AP_Vehicle : public AP_HAL::HAL::Callbacks {
 
@@ -77,8 +78,8 @@ public:
     void loop() override final;
 
     // set_mode *must* set control_mode_reason
-    bool virtual set_mode(const uint8_t new_mode, const ModeReason reason) = 0;
-    uint8_t virtual get_mode() const = 0;
+    virtual bool set_mode(const uint8_t new_mode, const ModeReason reason) = 0;
+    virtual uint8_t get_mode() const = 0;
 
     ModeReason get_control_mode_reason() const {
         return control_mode_reason;
@@ -177,19 +178,30 @@ public:
     // returns true if the vehicle has crashed
     virtual bool is_crashed() const;
 
+#ifdef ENABLE_SCRIPTING
     /*
       methods to control vehicle for use by scripting
     */
     virtual bool start_takeoff(float alt) { return false; }
     virtual bool set_target_location(const Location& target_loc) { return false; }
+    virtual bool set_target_pos_NED(const Vector3f& target_pos, bool use_yaw, float yaw_deg, bool use_yaw_rate, float yaw_rate_degs, bool yaw_relative, bool terrain_alt) { return false; }
+    virtual bool set_target_posvel_NED(const Vector3f& target_pos, const Vector3f& target_vel) { return false; }
+    virtual bool set_target_posvelaccel_NED(const Vector3f& target_pos, const Vector3f& target_vel, const Vector3f& target_accel, bool use_yaw, float yaw_deg, bool use_yaw_rate, float yaw_rate_degs, bool yaw_relative) { return false; }
     virtual bool set_target_velocity_NED(const Vector3f& vel_ned) { return false; }
+    virtual bool set_target_velaccel_NED(const Vector3f& target_vel, const Vector3f& target_accel, bool use_yaw, float yaw_deg, bool use_yaw_rate, float yaw_rate_degs, bool yaw_relative) { return false; }
     virtual bool set_target_angle_and_climbrate(float roll_deg, float pitch_deg, float yaw_deg, float climb_rate_ms, bool use_yaw_rate, float yaw_rate_degs) { return false; }
 
     // get target location (for use by scripting)
     virtual bool get_target_location(Location& target_loc) { return false; }
 
+    // circle mode controls (only used by scripting with Copter)
+    virtual bool get_circle_radius(float &radius_m) { return false; }
+    virtual bool set_circle_rate(float rate_dps) { return false; }
+
     // set steering and throttle (-1 to +1) (for use by scripting with Rover)
     virtual bool set_steering_and_throttle(float steering, float throttle) { return false; }
+#endif // ENABLE_SCRIPTING
+
 
     // control outputs enumeration
     enum class ControlOutput {
@@ -242,6 +254,16 @@ public:
     AP_Frsky_Parameters frsky_parameters;
 #endif
 
+    /*
+      Returns the pan and tilt for use by onvif camera in scripting
+     */
+    virtual bool get_pan_tilt_norm(float &pan_norm, float &tilt_norm) const { return false; }
+
+#if OSD_ENABLED
+   // Returns roll and  pitch for OSD Horizon, Plane overrides to correct for VTOL view and fixed wing TRIM_PITCH_CD
+    virtual void get_osd_roll_pitch_rad(float &roll, float &pitch) const;
+#endif
+
 protected:
 
     virtual void init_ardupilot() = 0;
@@ -269,7 +291,9 @@ protected:
     AP_Baro barometer;
     Compass compass;
     AP_InertialSensor ins;
+#if HAL_BUTTON_ENABLED
     AP_Button button;
+#endif
     RangeFinder rangefinder;
 
     AP_RSSI rssi;
@@ -291,11 +315,7 @@ protected:
     AP_Notify notify;
 
     // Inertial Navigation EKF
-#if AP_AHRS_NAVEKF_AVAILABLE
-    AP_AHRS_NavEKF ahrs;
-#else
-    AP_AHRS_DCM ahrs;
-#endif
+    AP_AHRS ahrs;
 
 #if HAL_HOTT_TELEM_ENABLED
     AP_Hott_Telem hott_telem;
@@ -305,7 +325,9 @@ protected:
     AP_VisualOdom visual_odom;
 #endif
 
+#if HAL_WITH_ESC_TELEM
     AP_ESC_Telem esc_telem;
+#endif
 
 #if HAL_MSP_ENABLED
     AP_MSP msp;
@@ -317,6 +339,10 @@ protected:
 
 #if HAL_EXTERNAL_AHRS_ENABLED
     AP_ExternalAHRS externalAHRS;
+#endif
+    
+#if HAL_SMARTAUDIO_ENABLED
+    AP_SmartAudio smartaudio;
 #endif
 
     static const struct AP_Param::GroupInfo var_info[];
@@ -337,12 +363,18 @@ private:
     // statustext:
     void send_watchdog_reset_statustext();
 
+    // run notch update at either loop rate or 200Hz
+    void update_dynamic_notch_at_specified_rate();
+
     bool likely_flying;         // true if vehicle is probably flying
     uint32_t _last_flying_ms;   // time when likely_flying last went true
+    uint32_t _last_notch_update_ms; // last time update_dynamic_notch() was run
 
     static AP_Vehicle *_singleton;
 
     bool done_safety_init;
+
+    uint32_t _last_internal_errors;  // backup of AP_InternalError::internal_errors bitmask
 };
 
 namespace AP {

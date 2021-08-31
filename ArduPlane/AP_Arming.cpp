@@ -21,6 +21,11 @@ const AP_Param::GroupInfo AP_Arming_Plane::var_info[] = {
  */
 bool AP_Arming_Plane::pre_arm_checks(bool display_failure)
 {
+    if (armed || require == (uint8_t)Required::NO) {
+        // if we are already armed or don't need any arming checks
+        // then skip the checks
+        return true;
+    }
     //are arming checks disabled?
     if (checks_to_perform == 0) {
         return true;
@@ -111,6 +116,12 @@ bool AP_Arming_Plane::pre_arm_checks(bool display_failure)
         ret = false;
     }
 
+    if (plane.quadplane.enabled() && ((plane.quadplane.options & QuadPlane::OPTION_ONLY_ARM_IN_QMODE_OR_AUTO) != 0) &&
+            !plane.control_mode->is_vtol_mode() && (plane.control_mode != &plane.mode_auto)) {
+        check_failed(display_failure,"not in Q mode");
+        ret = false;
+    }
+
     return ret;
 }
 
@@ -174,20 +185,6 @@ bool AP_Arming_Plane::arm_checks(AP_Arming::Method method)
         return true;
     }
 
-#if GEOFENCE_ENABLED == ENABLED
-    if (plane.g.fence_autoenable == FenceAutoEnable::WhenArmed) {
-        if (!plane.geofence_set_enabled(true)) {
-            gcs().send_text(MAV_SEVERITY_WARNING, "Fence: cannot enable for arming");
-            return false;
-        } else if (!plane.geofence_prearm_check()) {
-            plane.geofence_set_enabled(false);
-            return false;
-        } else {
-            gcs().send_text(MAV_SEVERITY_WARNING, "Fence: auto-enabled for arming");
-        }
-    }
-#endif
-    
     // call parent class checks
     return AP_Arming::arm_checks(method);
 }
@@ -262,9 +259,6 @@ bool AP_Arming_Plane::disarm(const AP_Arming::Method method, bool do_disarm_chec
     //only log if disarming was successful
     change_arm_state();
 
-    // reload target airspeed which could have been modified by a mission
-    plane.aparm.airspeed_cruise_cm.load();
-
 #if QAUTOTUNE_ENABLED
     //save qautotune gains if enabled and success
     if (plane.control_mode == &plane.mode_qautotune) {
@@ -276,18 +270,12 @@ bool AP_Arming_Plane::disarm(const AP_Arming::Method method, bool do_disarm_chec
 
     gcs().send_text(MAV_SEVERITY_INFO, "Throttle disarmed");
 
-#if GEOFENCE_ENABLED == ENABLED
-    if (plane.g.fence_autoenable == FenceAutoEnable::WhenArmed) {
-        plane.geofence_set_enabled(false);
-    }
-#endif
-    
     return true;
 }
 
 void AP_Arming_Plane::update_soft_armed()
 {
-    hal.util->set_soft_armed(is_armed() &&
+    hal.util->set_soft_armed((plane.quadplane.motor_test.running || is_armed()) &&
                              hal.util->safety_switch_state() != AP_HAL::Util::SAFETY_DISARMED);
     AP::logger().set_vehicle_armed(hal.util->get_soft_armed());
 

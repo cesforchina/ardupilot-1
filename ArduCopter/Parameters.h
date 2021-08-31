@@ -2,6 +2,7 @@
 
 #include <AP_Common/AP_Common.h>
 #include "RC_Channel.h"
+#include <AP_Proximity/AP_Proximity.h>
 
 #if GRIPPER_ENABLED == ENABLED
  # include <AP_Gripper/AP_Gripper.h>
@@ -492,7 +493,9 @@ public:
     AP_Float wp_navalt_min;
 
     // button checking
+#if HAL_BUTTON_ENABLED
     AP_Button *button_ptr;
+#endif
 
 #if STATS_ENABLED == ENABLED
     // vehicle statistics
@@ -520,7 +523,7 @@ public:
     AP_Beacon beacon;
 #endif
 
-#if PROXIMITY_ENABLED == ENABLED
+#if HAL_PROXIMITY_ENABLED
     // proximity (aka object avoidance) library
     AP_Proximity proximity;
 #endif
@@ -642,6 +645,15 @@ public:
     AP_Int32 rtl_options;
 #endif
 
+    AP_Int32 flight_options;
+
+#if RANGEFINDER_ENABLED == ENABLED
+    AP_Float rangefinder_filt;
+#endif
+
+#if MODE_GUIDED_ENABLED == ENABLED
+    AP_Float guided_timeout;
+#endif
 };
 
 extern const AP_Param::Info        var_info[];

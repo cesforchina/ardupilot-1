@@ -40,7 +40,7 @@ public:
     // Allows external system to identify type of receiver connected.
     virtual AP_GPS::GPS_Status highest_supported_status(void) { return AP_GPS::GPS_OK_FIX_3D; }
 
-    virtual bool is_configured(void) { return true; }
+    virtual bool is_configured(void) const { return true; }
 
     virtual void inject_data(const uint8_t *data, uint16_t len);
 
@@ -77,10 +77,19 @@ public:
     virtual bool get_RTCMV3(const uint8_t *&bytes, uint16_t &len) { return false; }
     virtual void clear_RTCMV3(void) {};
 
+    virtual bool get_error_codes(uint32_t &error_codes) const { return false; }
+
     // return iTOW of last message, or zero if not supported
     uint32_t get_last_itow(void) const {
         return _last_itow;
     }
+
+    enum DriverOptions : int16_t {
+        UBX_MBUseUart2    = (1U << 0U),
+        SBF_UseBaseForYaw = (1U << 1U),
+        UBX_Use115200     = (1U << 2U),
+        UAVCAN_MBUseDedicatedBus  = (1 << 3U),
+    };
 
 protected:
     AP_HAL::UARTDriver *port;           ///< UART we are attached to
@@ -114,11 +123,6 @@ protected:
 
     void check_new_itow(uint32_t itow, uint32_t msg_length);
 
-    enum DriverOptions : int16_t {
-        UBX_MBUseUart2    = (1 << 0U),
-        SBF_UseBaseForYaw = (1 << 1U),
-    };
-
     /*
       access to driver option bits
      */
@@ -128,6 +132,7 @@ protected:
 
 #if GPS_MOVING_BASELINE
     bool calculate_moving_base_yaw(const float reported_heading_deg, const float reported_distance, const float reported_D);
+    bool calculate_moving_base_yaw(AP_GPS::GPS_State &interim_state, const float reported_heading_deg, const float reported_distance, const float reported_D);
 #endif //GPS_MOVING_BASELINE
 
     // get GPS type, for subtype config

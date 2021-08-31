@@ -5,22 +5,26 @@
 
 #include <AP_Filesystem/AP_Filesystem_Available.h>
 
+#ifndef HAL_LOGGING_ENABLED
+#define HAL_LOGGING_ENABLED 1
+#endif
+
 // set default for HAL_LOGGING_DATAFLASH_ENABLED
 #ifndef HAL_LOGGING_DATAFLASH_ENABLED
     #ifdef HAL_LOGGING_DATAFLASH
-        #define HAL_LOGGING_DATAFLASH_ENABLED 1
+        #define HAL_LOGGING_DATAFLASH_ENABLED HAL_LOGGING_ENABLED
     #else
         #define HAL_LOGGING_DATAFLASH_ENABLED 0
     #endif
 #endif
 
 #ifndef HAL_LOGGING_MAVLINK_ENABLED
-    #define HAL_LOGGING_MAVLINK_ENABLED 1
+    #define HAL_LOGGING_MAVLINK_ENABLED HAL_LOGGING_ENABLED
 #endif
 
 #ifndef HAL_LOGGING_FILESYSTEM_ENABLED
     #if HAVE_FILESYSTEM_SUPPORT
-        #define HAL_LOGGING_FILESYSTEM_ENABLED 1
+        #define HAL_LOGGING_FILESYSTEM_ENABLED HAL_LOGGING_ENABLED
     #else
         #define HAL_LOGGING_FILESYSTEM_ENABLED 0
     #endif
@@ -28,7 +32,7 @@
 
 #ifndef HAL_LOGGING_SITL_ENABLED
     #if CONFIG_HAL_BOARD == HAL_BOARD_SITL
-        #define HAL_LOGGING_SITL_ENABLED 1
+        #define HAL_LOGGING_SITL_ENABLED HAL_LOGGING_ENABLED
     #else
         #define HAL_LOGGING_SITL_ENABLED 0
     #endif
@@ -66,10 +70,8 @@
 #include <AP_HAL/AP_HAL.h>
 #include <AP_AHRS/AP_AHRS.h>
 #include <AP_AHRS/AP_AHRS_DCM.h>
-#include <AP_AHRS/AP_AHRS_NavEKF.h>
 #include <AP_Common/AP_Common.h>
 #include <AP_Param/AP_Param.h>
-#include <AP_InertialSensor/AP_InertialSensor.h>
 #include <AP_Mission/AP_Mission.h>
 #include <AP_RPM/AP_RPM.h>
 #include <AP_Logger/LogStructure.h>
@@ -77,7 +79,6 @@
 #include <AP_Rally/AP_Rally.h>
 #include <AP_Beacon/AP_Beacon.h>
 #include <AP_Proximity/AP_Proximity.h>
-#include <AP_InertialSensor/AP_InertialSensor_Backend.h>
 #include <AP_Vehicle/ModeReason.h>
 
 #include <stdint.h>
@@ -148,6 +149,15 @@ enum class LogEvent : uint8_t {
     STANDBY_ENABLE = 74,
     STANDBY_DISABLE = 75,
 
+    FENCE_FLOOR_ENABLE = 80,
+    FENCE_FLOOR_DISABLE = 81,
+
+    // if the EKF's source input set is changed (e.g. via a switch or
+    // a script), we log an event:
+    EK3_SOURCES_SET_TO_PRIMARY = 85,
+    EK3_SOURCES_SET_TO_SECONDARY = 86,
+    EK3_SOURCES_SET_TO_TERTIARY = 87,
+
     SURFACED = 163,
     NOT_SURFACED = 164,
     BOTTOMED = 165,
@@ -190,6 +200,7 @@ enum class LogErrorSubsystem : uint8_t {
     FAILSAFE_LEAK = 27,
     PILOT_INPUT = 28,
     FAILSAFE_VIBE = 29,
+    INTERNAL_ERROR = 30,
 };
 
 // bizarrely this enumeration has lots of duplicate values, offering
@@ -219,6 +230,8 @@ enum class LogErrorCode : uint8_t {
     FAILED_CIRCLE_INIT = 4,
     DEST_OUTSIDE_FENCE = 5,
     RTL_MISSING_RNGFND = 6,
+    // subsystem specific error codes -- internal_error
+    INTERNAL_ERRORS_DETECTED = 1,
 
 // parachute failed to deploy because of low altitude or landed
     PARACHUTE_TOO_LOW = 2,
@@ -233,13 +246,10 @@ enum class LogErrorCode : uint8_t {
     GPS_GLITCH = 2,
 };
 
-// fwd declarations to avoid include errors
-class AC_AttitudeControl;
-class AC_PosControl;
-
 class AP_Logger
 {
     friend class AP_Logger_Backend; // for _num_types
+    friend class AP_Logger_RateLimiter;
 
 public:
     FUNCTOR_TYPEDEF(vehicle_startup_message_Writer, void);
@@ -266,6 +276,10 @@ public:
 
     /* Write a block of data at current offset */
     void WriteBlock(const void *pBuffer, uint16_t size);
+
+    /* Write block of data at current offset and return true if first backend succeeds*/
+    bool WriteBlock_first_succeed(const void *pBuffer, uint16_t size);
+
     /* Write an *important* block of data at current offset */
     void WriteCriticalBlock(const void *pBuffer, uint16_t size);
 
@@ -290,21 +304,6 @@ public:
     void Write_Event(LogEvent id);
     void Write_Error(LogErrorSubsystem sub_system,
                      LogErrorCode error_code);
-    void Write_GPS(uint8_t instance);
-    void Write_IMU();
-    bool Write_ISBH(uint16_t seqno,
-                        AP_InertialSensor::IMU_SENSOR_TYPE sensor_type,
-                        uint8_t instance,
-                        uint16_t multiplier,
-                        uint16_t sample_count,
-                        uint64_t sample_us,
-                        float sample_rate_hz);
-    bool Write_ISBD(uint16_t isb_seqno,
-                        uint16_t seqno,
-                        const int16_t x[32],
-                        const int16_t y[32],
-                        const int16_t z[32]);
-    void Write_Vibration();
     void Write_RCIN(void);
     void Write_RCOUT(void);
     void Write_RSSI();
@@ -313,9 +312,7 @@ public:
     void Write_Radio(const mavlink_radio_t &packet);
     void Write_Message(const char *message);
     void Write_MessageF(const char *fmt, ...);
-    void Write_ESC(uint8_t id, uint64_t time_us, int32_t rpm, uint16_t voltage, uint16_t current, int16_t esc_temp, uint16_t current_tot, int16_t motor_temp, float error_rate = 0.0f);
     void Write_ServoStatus(uint64_t time_us, uint8_t id, float position, float force, float speed, uint8_t power_pct);
-    void Write_ESCStatus(uint64_t time_us, uint8_t id, uint32_t error_count, float voltage, float current, float temperature, int32_t rpm, uint8_t power_pct);
     void Write_Compass();
     void Write_Mode(uint8_t mode, const ModeReason reason);
 
@@ -327,23 +324,22 @@ public:
     void Write_RallyPoint(uint8_t total,
                           uint8_t sequence,
                           const RallyLocation &rally_point);
-    void Write_VisualOdom(float time_delta, const Vector3f &angle_delta, const Vector3f &position_delta, float confidence);
-    void Write_VisualPosition(uint64_t remote_time_us, uint32_t time_ms, float x, float y, float z, float roll, float pitch, float yaw, float pos_err, float ang_err, uint8_t reset_counter, bool ignored);
-    void Write_VisualVelocity(uint64_t remote_time_us, uint32_t time_ms, const Vector3f &vel, float vel_err, uint8_t reset_counter, bool ignored);
     void Write_Beacon(AP_Beacon &beacon);
+#if HAL_PROXIMITY_ENABLED
     void Write_Proximity(AP_Proximity &proximity);
+#endif
     void Write_SRTL(bool active, uint16_t num_points, uint16_t max_points, uint8_t action, const Vector3f& point);
-    void Write_OABendyRuler(uint8_t type, bool active, float target_yaw, float target_pitch, bool ignore_chg, float margin, const Location &final_dest, const Location &oa_dest);
-    void Write_OADijkstra(uint8_t state, uint8_t error_id, uint8_t curr_point, uint8_t tot_points, const Location &final_dest, const Location &oa_dest);
-    void Write_SimpleAvoidance(uint8_t state, const Vector2f& desired_vel, const Vector2f& modified_vel, bool back_up);
     void Write_Winch(bool healthy, bool thread_end, bool moving, bool clutch, uint8_t mode, float desired_length, float length, float desired_rate, uint16_t tension, float voltage, int8_t temp);
     void Write_PSC(const Vector3f &pos_target, const Vector3f &position, const Vector3f &vel_target, const Vector3f &velocity, const Vector3f &accel_target, const float &accel_x, const float &accel_y);
+    void Write_PSCZ(float pos_target_z, float pos_z, float vel_desired_z, float vel_target_z, float vel_z, float accel_desired_z, float accel_target_z, float accel_z, float throttle_out);
 
     void Write(const char *name, const char *labels, const char *fmt, ...);
     void Write(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, ...);
+    void WriteStreaming(const char *name, const char *labels, const char *fmt, ...);
+    void WriteStreaming(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, ...);
     void WriteCritical(const char *name, const char *labels, const char *fmt, ...);
     void WriteCritical(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, ...);
-    void WriteV(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, va_list arg_list, bool is_critical=false);
+    void WriteV(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, va_list arg_list, bool is_critical=false, bool is_streaming=false);
 
     // This structure provides information on the internal member data of a PID for logging purposes
     struct PID_Info {
@@ -355,6 +351,7 @@ public:
         float D;
         float FF;
         float Dmod;
+        float slew_rate;
         bool  limit;
     };
 
@@ -399,6 +396,9 @@ public:
         AP_Int8 mav_bufsize; // in kilobytes
         AP_Int16 file_timeout; // in seconds
         AP_Int16 min_MB_free;
+        AP_Float file_ratemax;
+        AP_Float mav_ratemax;
+        AP_Float blk_ratemax;
     } _params;
 
     const struct LogStructure *structure(uint16_t num) const;
@@ -420,9 +420,7 @@ public:
     bool vehicle_is_armed() const { return _armed; }
 
     void handle_log_send();
-    bool in_log_download() const {
-        return transfer_activity != TransferActivity::IDLE;
-    }
+    bool in_log_download() const;
 
     float quiet_nanf() const { return nanf("0x4152"); } // "AR"
     double quiet_nan() const { return nan("0x4152445550490a"); } // "ARDUPI"
@@ -508,9 +506,8 @@ private:
     bool _armed;
 
     // state to help us not log unneccesary RCIN values:
-    bool seen_nonzero_rcin15_or_rcin16;
+    bool should_log_rcin2;
 
-    void Write_IMU_instance(uint64_t time_us, uint8_t imu_instance);
     void Write_Compass_instance(uint64_t time_us, uint8_t mag_instance);
 
     void backend_starting_new_log(const AP_Logger_Backend *backend);
@@ -553,6 +550,9 @@ private:
         LISTING, // actively sending log_entry packets
         SENDING, // actively sending log_sending packets
     } transfer_activity = TransferActivity::IDLE;
+
+    // last time we handled a log-transfer-over-mavlink message:
+    uint32_t _last_mavlink_log_transfer_message_handled_ms;
 
     // next log list entry to send
     uint16_t _log_next_list_entry;

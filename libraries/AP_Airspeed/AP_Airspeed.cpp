@@ -31,6 +31,7 @@
 #include "AP_Airspeed_SDP3X.h"
 #include "AP_Airspeed_DLVR.h"
 #include "AP_Airspeed_analog.h"
+#include "AP_Airspeed_ASP5033.h"
 #include "AP_Airspeed_Backend.h"
 #if HAL_ENABLE_LIBUAVCAN_DRIVERS
 #include "AP_Airspeed_UAVCAN.h"
@@ -83,9 +84,16 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
     // @Param: _TYPE
     // @DisplayName: Airspeed type
     // @Description: Type of airspeed sensor
-    // @Values: 0:None,1:I2C-MS4525D0,2:Analog,3:I2C-MS5525,4:I2C-MS5525 (0x76),5:I2C-MS5525 (0x77),6:I2C-SDP3X,7:I2C-DLVR-5in,8:UAVCAN,9:I2C-DLVR-10in,10:I2C-DLVR-20in,11:I2C-DLVR-30in,12:I2C-DLVR-60in,13:NMEA water speed,14:MSP
+    // @Values: 0:None,1:I2C-MS4525D0,2:Analog,3:I2C-MS5525,4:I2C-MS5525 (0x76),5:I2C-MS5525 (0x77),6:I2C-SDP3X,7:I2C-DLVR-5in,8:UAVCAN,9:I2C-DLVR-10in,10:I2C-DLVR-20in,11:I2C-DLVR-30in,12:I2C-DLVR-60in,13:NMEA water speed,14:MSP,15:ASP5033
     // @User: Standard
     AP_GROUPINFO_FLAGS("_TYPE", 0, AP_Airspeed, param[0].type, ARSPD_DEFAULT_TYPE, AP_PARAM_FLAG_ENABLE),
+
+    // @Param: _DEVID
+    // @DisplayName: Airspeed ID
+    // @Description: Airspeed sensor ID, taking into account its type, bus and instance
+    // @ReadOnly: True
+    // @User: Advanced
+    AP_GROUPINFO_FLAGS("_DEVID", 24, AP_Airspeed, param[0].bus_id, 0, AP_PARAM_FLAG_INTERNAL_USE_ONLY),
 
 #ifndef HAL_BUILD_AP_PERIPH
     // @Param: _USE
@@ -166,8 +174,8 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
 #ifndef HAL_BUILD_AP_PERIPH
     // @Param: _OPTIONS
     // @DisplayName: Airspeed options bitmask
-    // @Description: Bitmask of options to use with airspeed. Disable and/or re-enable sensor based on the difference between airspeed and ground speed based on ARSPD_WIND_MAX threshold, if set
-    // @Bitmask: 0:Disable sensor, 1:Re-enable sensor
+    // @Description: Bitmask of options to use with airspeed. 0:Disable use based on airspeed/groundspeed mismatch (see ARSPD_WIND_MAX), 1:Automatically reenable use based on airspeed/groundspeed mismatch recovery (see ARSPD_WIND_MAX) 2:Disable voltage correction
+    // @Bitmask: 0:SpeedMismatchDisable, 1:AllowSpeedMismatchRecovery, 2:DisableVoltageCorrection
     // @User: Advanced
     AP_GROUPINFO("_OPTIONS", 21, AP_Airspeed, _options, OPTIONS_DEFAULT),
 
@@ -190,7 +198,7 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
     // @Param: 2_TYPE
     // @DisplayName: Second Airspeed type
     // @Description: Type of 2nd airspeed sensor
-    // @Values: 0:None,1:I2C-MS4525D0,2:Analog,3:I2C-MS5525,4:I2C-MS5525 (0x76),5:I2C-MS5525 (0x77),6:I2C-SDP3X,7:I2C-DLVR-5in,8:UAVCAN,9:I2C-DLVR-10in,10:I2C-DLVR-20in,11:I2C-DLVR-30in,12:I2C-DLVR-60in,13:NMEA water speed,14:MSP
+    // @Values: 0:None,1:I2C-MS4525D0,2:Analog,3:I2C-MS5525,4:I2C-MS5525 (0x76),5:I2C-MS5525 (0x77),6:I2C-SDP3X,7:I2C-DLVR-5in,8:UAVCAN,9:I2C-DLVR-10in,10:I2C-DLVR-20in,11:I2C-DLVR-30in,12:I2C-DLVR-60in,13:NMEA water speed,14:MSP,15:ASP5033
     // @User: Standard
     AP_GROUPINFO_FLAGS("2_TYPE", 11, AP_Airspeed, param[1].type, 0, AP_PARAM_FLAG_ENABLE),
 
@@ -252,10 +260,20 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
     // @Values: 0:Bus0(internal),1:Bus1(external),2:Bus2(auxillary)
     // @User: Advanced
     AP_GROUPINFO("2_BUS",  20, AP_Airspeed, param[1].bus, 1),
+
+#if AIRSPEED_MAX_SENSORS > 1
+    // @Param: 2_DEVID
+    // @DisplayName: Airspeed2 ID
+    // @Description: Airspeed2 sensor ID, taking into account its type, bus and instance
+    // @ReadOnly: True
+    // @User: Advanced
+    AP_GROUPINFO_FLAGS("2_DEVID", 25, AP_Airspeed, param[1].bus_id, 0, AP_PARAM_FLAG_INTERNAL_USE_ONLY),
+#endif
+    
 #endif // AIRSPEED_MAX_SENSORS
 
     // Note that 21, 22 and 23 are used above by the _OPTIONS, _WIND_MAX and _WIND_WARN parameters.  Do not use them!!
-
+    
     AP_GROUPEND
 };
 
@@ -356,6 +374,11 @@ void AP_Airspeed::init()
             sensor[i] = new AP_Airspeed_DLVR(*this, i, 60);
 #endif // !HAL_MINIMIZE_FEATURES
             break;
+        case TYPE_I2C_ASP5033:
+#if !HAL_MINIMIZE_FEATURES
+            sensor[i] = new AP_Airspeed_ASP5033(*this, i);
+#endif // !HAL_MINIMIZE_FEATURES
+            break;
         case TYPE_UAVCAN:
 #if HAL_ENABLE_LIBUAVCAN_DRIVERS
             sensor[i] = AP_Airspeed_UAVCAN::probe(*this, i);
@@ -388,10 +411,6 @@ float AP_Airspeed::get_pressure(uint8_t i)
 {
     if (!enabled(i)) {
         return 0;
-    }
-    if (state[i].hil_set) {
-        state[i].healthy = true;
-        return state[i].hil_pressure;
     }
     float pressure = 0;
     if (sensor[i]) {
@@ -619,19 +638,11 @@ void AP_Airspeed::Log_Airspeed()
     }
 }
 
-void AP_Airspeed::setHIL(float airspeed, float diff_pressure, float temperature)
-{
-    state[0].raw_airspeed = airspeed;
-    state[0].airspeed = airspeed;
-    state[0].last_pressure = diff_pressure;
-    state[0].last_update_ms = AP_HAL::millis();
-    state[0].hil_pressure = diff_pressure;
-    state[0].hil_set = true;
-    state[0].healthy = true;
-}
-
 bool AP_Airspeed::use(uint8_t i) const
 {
+    if (_force_disable_use) {
+        return false;
+    }
     if (!enabled(i) || !param[i].use) {
         return false;
     }

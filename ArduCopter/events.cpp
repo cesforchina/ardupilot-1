@@ -33,6 +33,9 @@ void Copter::failsafe_radio_on_event()
         case FS_THR_ENABLED_ALWAYS_LAND:
             desired_action = Failsafe_Action_Land;
             break;
+        case FS_THR_ENABLED_AUTO_RTL_OR_RTL:
+            desired_action = Failsafe_Action_Auto_DO_LAND_START;
+            break;
         default:
             desired_action = Failsafe_Action_Land;
     }
@@ -54,7 +57,7 @@ void Copter::failsafe_radio_on_event()
         gcs().send_text(MAV_SEVERITY_WARNING, "Radio Failsafe - Continuing Landing");
         desired_action = Failsafe_Action_Land;
 
-    } else if (control_mode == Mode::Number::AUTO && failsafe_option(FailsafeOption::RC_CONTINUE_IF_AUTO)) {
+    } else if (flightmode->mode_number() == Mode::Number::AUTO && failsafe_option(FailsafeOption::RC_CONTINUE_IF_AUTO)) {
         // Allow mission to continue when FS_OPTIONS is set to continue mission
         gcs().send_text(MAV_SEVERITY_WARNING, "Radio Failsafe - Continuing Auto Mode");       
         desired_action = Failsafe_Action_None;
@@ -112,13 +115,18 @@ void Copter::handle_battery_failsafe(const char *type_str, const int8_t action)
 void Copter::failsafe_gcs_check()
 {
     // Bypass GCS failsafe checks if disabled or GCS never connected
-    if (g.failsafe_gcs == FS_GCS_DISABLED || failsafe.last_heartbeat_ms == 0) {
+    if (g.failsafe_gcs == FS_GCS_DISABLED) {
+        return;
+    }
+
+    const uint32_t gcs_last_seen_ms = gcs().sysid_myggcs_last_seen_time_ms();
+    if (gcs_last_seen_ms == 0) {
         return;
     }
 
     // calc time since last gcs update
     // note: this only looks at the heartbeat from the device id set by g.sysid_my_gcs
-    const uint32_t last_gcs_update_ms = millis() - failsafe.last_heartbeat_ms;
+    const uint32_t last_gcs_update_ms = millis() - gcs_last_seen_ms;
     const uint32_t gcs_timeout_ms = uint32_t(constrain_float(g2.fs_gcs_timeout * 1000.0f, 0.0f, UINT32_MAX));
 
     // Determine which event to trigger
@@ -165,6 +173,9 @@ void Copter::failsafe_gcs_on_event(void)
         case FS_GCS_ENABLED_ALWAYS_LAND:
             desired_action = Failsafe_Action_Land;
             break;
+        case FS_GCS_ENABLED_AUTO_RTL_OR_RTL:
+            desired_action = Failsafe_Action_Auto_DO_LAND_START;
+            break;
         default: // if an invalid parameter value is set, the fallback is RTL
             desired_action = Failsafe_Action_RTL;
     }
@@ -190,7 +201,7 @@ void Copter::failsafe_gcs_on_event(void)
         gcs().send_text(MAV_SEVERITY_WARNING, "GCS Failsafe - Continuing Landing");
         desired_action = Failsafe_Action_Land;
 
-    } else if (control_mode == Mode::Number::AUTO && failsafe_option(FailsafeOption::GCS_CONTINUE_IF_AUTO)) {
+    } else if (flightmode->mode_number() == Mode::Number::AUTO && failsafe_option(FailsafeOption::GCS_CONTINUE_IF_AUTO)) {
         // Allow mission to continue when FS_OPTIONS is set to continue mission
         gcs().send_text(MAV_SEVERITY_WARNING, "GCS Failsafe - Continuing Auto Mode");
         desired_action = Failsafe_Action_None;
@@ -262,7 +273,7 @@ void Copter::failsafe_terrain_on_event()
     if (should_disarm_on_failsafe()) {
         arming.disarm(AP_Arming::Method::TERRAINFAILSAFE);
 #if MODE_RTL_ENABLED == ENABLED
-    } else if (control_mode == Mode::Number::RTL) {
+    } else if (flightmode->mode_number() == Mode::Number::RTL) {
         mode_rtl.restart_without_terrain();
 #endif
     } else {
@@ -331,17 +342,33 @@ void Copter::set_mode_SmartRTL_or_RTL(ModeReason reason)
     }
 }
 
+// Sets mode to Auto and jumps to DO_LAND_START, as set with AUTO_RTL param
+// This can come from failsafe or RC option
+void Copter::set_mode_auto_do_land_start_or_RTL(ModeReason reason)
+{
+#if MODE_AUTO_ENABLED == ENABLED
+    if (copter.mode_auto.jump_to_landing_sequence_auto_RTL(reason)) {
+        AP_Notify::events.failsafe_mode_change = 1;
+        return;
+    }
+#endif
+
+    gcs().send_text(MAV_SEVERITY_WARNING, "Trying RTL Mode");
+    set_mode_RTL_or_land_with_pause(reason);
+}
+
 bool Copter::should_disarm_on_failsafe() {
     if (ap.in_arming_delay) {
         return true;
     }
 
-    switch (control_mode) {
+    switch (flightmode->mode_number()) {
         case Mode::Number::STABILIZE:
         case Mode::Number::ACRO:
             // if throttle is zero OR vehicle is landed disarm motors
             return ap.throttle_zero || ap.land_complete;
         case Mode::Number::AUTO:
+        case Mode::Number::AUTO_RTL:
             // if mission has not started AND vehicle is landed, disarm motors
             return !ap.auto_armed && ap.land_complete;
         default:
@@ -376,8 +403,11 @@ void Copter::do_failsafe_action(Failsafe_Action action, ModeReason reason){
 #else
             arming.disarm(AP_Arming::Method::FAILSAFE_ACTION_TERMINATE);
 #endif
+            break;
         }
-        break;
+        case Failsafe_Action_Auto_DO_LAND_START:
+            set_mode_auto_do_land_start_or_RTL(reason);
+            break;
     }
 
 #if GRIPPER_ENABLED == ENABLED

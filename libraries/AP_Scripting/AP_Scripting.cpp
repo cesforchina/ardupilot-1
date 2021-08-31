@@ -43,6 +43,10 @@
 static_assert(SCRIPTING_STACK_SIZE >= SCRIPTING_STACK_MIN_SIZE, "Scripting requires a larger minimum stack size");
 static_assert(SCRIPTING_STACK_SIZE <= SCRIPTING_STACK_MAX_SIZE, "Scripting requires a smaller stack size");
 
+#ifndef SCRIPTING_ENABLE_DEFAULT
+#define SCRIPTING_ENABLE_DEFAULT 0
+#endif
+
 extern const AP_HAL::HAL& hal;
 
 const AP_Param::GroupInfo AP_Scripting::var_info[] = {
@@ -52,7 +56,7 @@ const AP_Param::GroupInfo AP_Scripting::var_info[] = {
     // @Values: 0:None,1:Lua Scripts
     // @RebootRequired: True
     // @User: Advanced
-    AP_GROUPINFO_FLAGS("ENABLE", 1, AP_Scripting, _enable, 0, AP_PARAM_FLAG_ENABLE),
+    AP_GROUPINFO_FLAGS("ENABLE", 1, AP_Scripting, _enable, SCRIPTING_ENABLE_DEFAULT, AP_PARAM_FLAG_ENABLE),
 
     // @Param: VM_I_COUNT
     // @DisplayName: Scripting Virtual Machine Instruction Count
@@ -132,7 +136,6 @@ void AP_Scripting::init(void) {
     if (AP::FS().mkdir(dir_name)) {
         if (errno != EEXIST) {
             gcs().send_text(MAV_SEVERITY_INFO, "Lua: failed to create (%s)", dir_name);
-            return;
         }
     }
 
@@ -205,6 +208,30 @@ void AP_Scripting::thread(void) {
 
     // only reachable if the lua backend has died for any reason
     gcs().send_text(MAV_SEVERITY_CRITICAL, "Scripting has stopped");
+}
+
+void AP_Scripting::handle_mission_command(const AP_Mission::Mission_Command& cmd_in)
+{
+    if (!_enable) {
+        return;
+    }
+
+    if (mission_data == nullptr) {
+        // load buffer
+        mission_data = new ObjectBuffer<struct AP_Scripting::scripting_mission_cmd>(mission_cmd_queue_size);
+        if (mission_data == nullptr) {
+            gcs().send_text(MAV_SEVERITY_INFO, "scripting: unable to receive mission command");
+            return;
+        }
+    }
+
+    struct scripting_mission_cmd cmd {cmd_in.p1,
+                                      cmd_in.content.scripting.p1,
+                                      cmd_in.content.scripting.p2,
+                                      cmd_in.content.scripting.p3,
+                                      AP_HAL::millis()};
+
+    mission_data->push(cmd);
 }
 
 AP_Scripting *AP_Scripting::_singleton = nullptr;

@@ -27,6 +27,10 @@
 
 #define GCS_DEBUG_SEND_MESSAGE_TIMINGS 0
 
+#ifndef HAL_HIGH_LATENCY2_ENABLED
+#define HAL_HIGH_LATENCY2_ENABLED !HAL_MINIMIZE_FEATURES
+#endif
+
 #ifndef HAL_NO_GCS
 
 // macros used to determine if a message will fit in the space available.
@@ -221,13 +225,16 @@ public:
     void send_meminfo(void);
     void send_fence_status() const;
     void send_power_status(void);
+#if HAL_WITH_MCU_MONITORING
+    void send_mcu_status(void);
+#endif
     void send_battery_status(const uint8_t instance) const;
     bool send_battery_status();
-    void send_distance_sensor() const;
+    void send_distance_sensor();
     // send_rangefinder sends only if a downward-facing instance is
     // found.  Rover overrides this!
     virtual void send_rangefinder() const;
-    void send_proximity() const;
+    void send_proximity();
     virtual void send_nav_controller_output() const = 0;
     virtual void send_pid_tuning() = 0;
     void send_ahrs2();
@@ -240,13 +247,13 @@ public:
     void send_scaled_pressure();
     void send_scaled_pressure2();
     virtual void send_scaled_pressure3(); // allow sub to override this
-    void send_sensor_offsets();
-    virtual void send_simstate() const;
+    void send_simstate() const;
     void send_sim_state() const;
     void send_ahrs();
     void send_battery2();
     void send_opticalflow();
     virtual void send_attitude() const;
+    virtual void send_attitude_quaternion() const;
     void send_autopilot_version() const;
     void send_extended_sys_state() const;
     void send_local_position() const;
@@ -267,6 +274,10 @@ public:
     void send_rpm() const;
     void send_generator_status() const;
     virtual void send_winch_status() const {};
+    void send_water_depth() const;
+#if HAL_HIGH_LATENCY2_ENABLED
+    void send_high_latency() const;
+#endif // HAL_HIGH_LATENCY2_ENABLED
 
     // lock a channel, preventing use by MAVLink
     void lock(bool _lock) {
@@ -341,8 +352,6 @@ public:
 
 protected:
 
-    virtual bool in_hil_mode() const { return false; }
-
     bool mavlink_coordinate_frame_to_location_alt_frame(MAV_FRAME coordinate_frame,
                                                         Location::AltFrame &frame);
 
@@ -369,6 +378,8 @@ protected:
     // saveable rate of each stream
     AP_Int16        *streamRates;
 
+    void handle_heartbeat(const mavlink_message_t &msg) const;
+
     virtual bool persist_streamrates() const { return false; }
     void handle_request_data_stream(const mavlink_message_t &msg);
 
@@ -384,11 +395,17 @@ protected:
 
     virtual MAV_RESULT handle_command_component_arm_disarm(const mavlink_command_long_t &packet);
     MAV_RESULT handle_command_do_set_home(const mavlink_command_long_t &packet);
-
+    MAV_RESULT handle_command_do_aux_function(const mavlink_command_long_t &packet);
     void handle_mission_request_list(const mavlink_message_t &msg);
     void handle_mission_request(const mavlink_message_t &msg) const;
     void handle_mission_request_int(const mavlink_message_t &msg) const;
     void handle_mission_clear_all(const mavlink_message_t &msg) const;
+
+    // Note that there exists a relatively new mavlink DO command,
+    // MAV_CMD_DO_SET_MISSION_CURRENT which provides an acknowledgement
+    // that the command has been received, rather than the GCS having to
+    // rely on getting back an identical sequence number as some currently
+    // do.
     virtual void handle_mission_set_current(AP_Mission &mission, const mavlink_message_t &msg);
     void handle_mission_count(const mavlink_message_t &msg);
     void handle_mission_write_partial_list(const mavlink_message_t &msg);
@@ -405,7 +422,7 @@ protected:
     void handle_param_request_list(const mavlink_message_t &msg);
     void handle_param_request_read(const mavlink_message_t &msg);
     virtual bool params_ready() const { return true; }
-    virtual void handle_rc_channels_override(const mavlink_message_t &msg);
+    void handle_rc_channels_override(const mavlink_message_t &msg);
     void handle_system_time_message(const mavlink_message_t &msg);
     void handle_common_rally_message(const mavlink_message_t &msg);
     void handle_rally_fetch_point(const mavlink_message_t &msg);
@@ -456,6 +473,7 @@ protected:
     bool telemetry_delayed() const;
     virtual uint32_t telem_delay() const = 0;
 
+    MAV_RESULT handle_command_run_prearm_checks(const mavlink_command_long_t &packet);
     MAV_RESULT handle_command_preflight_set_sensor_offsets(const mavlink_command_long_t &packet);
     MAV_RESULT handle_command_flash_bootloader(const mavlink_command_long_t &packet);
 
@@ -467,6 +485,8 @@ protected:
     virtual MAV_RESULT _handle_command_preflight_calibration_baro();
 
     MAV_RESULT handle_command_preflight_can(const mavlink_command_long_t &packet);
+
+    virtual MAV_RESULT handle_command_do_set_mission_current(const mavlink_command_long_t &packet);
 
     MAV_RESULT handle_command_battery_reset(const mavlink_command_long_t &packet);
     void handle_command_long(const mavlink_message_t &msg);
@@ -483,15 +503,19 @@ protected:
     MAV_RESULT handle_command_do_set_roi(const mavlink_command_long_t &packet);
     virtual MAV_RESULT handle_command_do_set_roi(const Location &roi_loc);
     MAV_RESULT handle_command_do_gripper(const mavlink_command_long_t &packet);
+    MAV_RESULT handle_command_do_sprayer(const mavlink_command_long_t &packet);
     MAV_RESULT handle_command_do_set_mode(const mavlink_command_long_t &packet);
     MAV_RESULT handle_command_get_home_position(const mavlink_command_long_t &packet);
     MAV_RESULT handle_command_do_fence_enable(const mavlink_command_long_t &packet);
     MAV_RESULT handle_command_debug_trap(const mavlink_command_long_t &packet);
+    MAV_RESULT handle_command_set_ekf_source_set(const mavlink_command_long_t &packet);
 
     void handle_optical_flow(const mavlink_message_t &msg);
 
     MAV_RESULT handle_fixed_mag_cal_yaw(const mavlink_command_long_t &packet);
 
+    // default empty handling of LANDING_TARGET
+    virtual void handle_landing_target(const mavlink_landing_target_t &packet, uint32_t timestamp_ms) { }
     // vehicle-overridable message send function
     virtual bool try_send_message(enum ap_message id);
     virtual void send_global_position_int();
@@ -510,10 +534,22 @@ protected:
     virtual int16_t vfr_hud_throttle() const { return 0; }
     virtual float vfr_hud_alt() const;
 
+#if HAL_HIGH_LATENCY2_ENABLED
+    virtual int16_t high_latency_target_altitude() const { return 0; }
+    virtual uint8_t high_latency_tgt_heading() const { return 0; }
+    virtual uint16_t high_latency_tgt_dist() const { return 0; }
+    virtual uint8_t high_latency_tgt_airspeed() const { return 0; }
+    virtual uint8_t high_latency_wind_speed() const { return 0; }
+    virtual uint8_t high_latency_wind_direction() const { return 0; }
+    virtual int8_t high_latency_air_temperature() const { return 0; }
+#endif // HAL_HIGH_LATENCY2_ENABLED
+
     static constexpr const float magic_force_arm_value = 2989.0f;
     static constexpr const float magic_force_disarm_value = 21196.0f;
 
     void manual_override(RC_Channel *c, int16_t value_in, uint16_t offset, float scaler, const uint32_t tnow, bool reversed = false);
+
+    uint8_t receiver_rssi() const;
 
     /*
       correct an offboard timestamp in microseconds to a local time
@@ -533,6 +569,8 @@ private:
     void log_mavlink_stats();
 
     MAV_RESULT _set_mode_common(const MAV_MODE base_mode, const uint32_t custom_mode);
+
+    void service_statustext(void);
 
     virtual void        handleMessage(const mavlink_message_t &msg) = 0;
 
@@ -559,28 +597,10 @@ private:
                                                          // queued send
     uint32_t                    _queued_parameter_send_time_ms;
 
-    /// Count the number of reportable parameters.
-    ///
-    /// Not all parameters can be reported via MAVlink.  We count the number
-    // that are
-    /// so that we can report to a GCS the number of parameters it should
-    // expect when it
-    /// requests the full set.
-    ///
-    /// @return         The number of reportable parameters.
-    ///
-    uint16_t                    packet_drops;
-
     // number of extra ms to add to slow things down for the radio
     uint16_t         stream_slowdown_ms;
     // last reported radio buffer percent available
     uint8_t          last_txbuf = 100;
-
-    // perf counters
-    AP_HAL::Util::perf_counter_t _perf_packet;
-    AP_HAL::Util::perf_counter_t _perf_update;
-    char _perf_packet_name[16];
-    char _perf_update_name[16];
 
     // outbound ("deferred message") queue.
 
@@ -800,6 +820,7 @@ private:
                                                      const uint8_t reset_counter,
                                                      const uint16_t payload_size);
     void handle_vision_speed_estimate(const mavlink_message_t &msg);
+    void handle_landing_target(const mavlink_message_t &msg);
 
     void lock_channel(const mavlink_channel_t chan, bool lock);
 
@@ -851,6 +872,11 @@ private:
 
     uint8_t last_battery_status_idx;
 
+    // if we've ever sent a DISTANCE_SENSOR message out of an
+    // orientation we continue to send it out, even if it is not
+    // longer valid.
+    uint8_t proximity_ever_valid_bitmask;
+
     // true if we should NOT do MAVLink on this port (usually because
     // someone's doing SERIAL_CONTROL over mavlink)
     bool _locked;
@@ -882,6 +908,38 @@ public:
     virtual uint32_t custom_mode() const = 0;
     virtual MAV_TYPE frame_type() const = 0;
     virtual const char* frame_string() const { return nullptr; }
+
+    struct statustext_t {
+        mavlink_statustext_t    msg;
+        uint16_t                entry_created_ms;
+        uint8_t                 bitmask;
+    };
+    class StatusTextQueue : public ObjectArray<statustext_t> {
+    public:
+        using ObjectArray::ObjectArray;
+        HAL_Semaphore &semaphore() { return _sem; }
+        void prune();
+    private:
+        // a lock for the statustext queue, to make it safe to use send_text()
+        // from multiple threads
+        HAL_Semaphore _sem;
+
+        uint32_t last_prune_ms;
+    };
+
+    StatusTextQueue &statustext_queue() {
+        return _statustext_queue;
+    }
+
+    // last time traffic was seen from my designated GCS.  traffic
+    // includes heartbeats and some manual control messages.
+    uint32_t sysid_myggcs_last_seen_time_ms() const {
+        return _sysid_mygcs_last_seen_time_ms;
+    }
+    // called when valid traffic has been seen from our GCS
+    void sysid_myggcs_seen(uint32_t seen_time_ms) {
+        _sysid_mygcs_last_seen_time_ms = seen_time_ms;
+    }
 
     void send_to_active_channels(uint32_t msgid, const char *pkt);
 
@@ -979,10 +1037,6 @@ private:
     void create_gcs_mavlink_backend(GCS_MAVLINK_Parameters &params,
                                     AP_HAL::UARTDriver &uart);
 
-    struct statustext_t {
-        uint8_t                 bitmask;
-        mavlink_statustext_t    msg;
-    };
     char statustext_printf_buffer[256+1];
 
     virtual AP_GPS::GPS_Status min_status_for_gps_healthy() const {
@@ -992,19 +1046,19 @@ private:
 
     void update_sensor_status_flags();
 
+    // time we last saw traffic from our GCS
+    uint32_t _sysid_mygcs_last_seen_time_ms;
+
     void service_statustext(void);
 #if HAL_MEM_CLASS <= HAL_MEM_CLASS_192 || CONFIG_HAL_BOARD == HAL_BOARD_SITL
-    static const uint8_t _status_capacity = 5;
+    static const uint8_t _status_capacity = 7;
 #else
     static const uint8_t _status_capacity = 30;
 #endif
 
-    // a lock for the statustext queue, to make it safe to use send_text()
-    // from multiple threads
-    HAL_Semaphore _statustext_sem;
-
-    // queue of outgoing statustext messages
-    ObjectArray<statustext_t> _statustext_queue{_status_capacity};
+    // queue of outgoing statustext messages.  Each entry consumes 58
+    // bytes of RAM on stm32
+    StatusTextQueue _statustext_queue{_status_capacity};
 
     // true if we have already allocated protocol objects:
     bool initialised_missionitemprotocol_objects;
@@ -1040,7 +1094,14 @@ private:
 GCS &gcs();
 
 // send text when we do have a GCS
+#if !defined(HAL_BUILD_AP_PERIPH)
 #define GCS_SEND_TEXT(severity, format, args...) gcs().send_text(severity, format, ##args)
+#else
+extern "C" {
+void can_printf(const char *fmt, ...);
+}
+#define GCS_SEND_TEXT(severity, format, args...) (void)severity; can_printf(format, ##args)
+#endif
 
 #elif defined(HAL_BUILD_AP_PERIPH) && !defined(STM32F1)
 

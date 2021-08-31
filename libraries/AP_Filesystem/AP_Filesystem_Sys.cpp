@@ -35,8 +35,11 @@ static const SysFileList sysfs_file_list[] = {
     {"tasks.txt"},
     {"dma.txt"},
     {"memory.txt"},
+    {"uarts.txt"},
 #if HAL_MAX_CAN_PROTOCOL_DRIVERS
     {"can_log.txt"},
+#endif
+#if HAL_NUM_CAN_IFACES > 0
     {"can0_stats.txt"},
     {"can1_stats.txt"},
 #endif
@@ -89,20 +92,28 @@ int AP_Filesystem_Sys::open(const char *fname, int flags)
     if (strcmp(fname, "threads.txt") == 0) {
         hal.util->thread_info(*r.str);
     }
+#if HAL_SCHEDULER_ENABLED
     if (strcmp(fname, "tasks.txt") == 0) {
         AP::scheduler().task_info(*r.str);
     }
+#endif
     if (strcmp(fname, "dma.txt") == 0) {
         hal.util->dma_info(*r.str);
     }
     if (strcmp(fname, "memory.txt") == 0) {
         hal.util->mem_info(*r.str);
     }
-#if HAL_MAX_CAN_PROTOCOL_DRIVERS
-    int8_t can_stats_num = -1;
+    if (strcmp(fname, "uarts.txt") == 0) {
+        hal.util->uart_info(*r.str);
+    }
+#if HAL_CANMANAGER_ENABLED
     if (strcmp(fname, "can_log.txt") == 0) {
         AP::can().log_retrieve(*r.str);
-    } else if (strcmp(fname, "can0_stats.txt") == 0) {
+    }
+#endif
+#if HAL_NUM_CAN_IFACES > 0
+    int8_t can_stats_num = -1;
+    if (strcmp(fname, "can0_stats.txt") == 0) {
         can_stats_num = 0;
     } else if (strcmp(fname, "can1_stats.txt") == 0) {
         can_stats_num = 1;

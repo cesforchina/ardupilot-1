@@ -105,6 +105,8 @@ COMMON_VEHICLE_DEPENDENT_LIBRARIES = [
     'AP_OLC',
     'AP_WheelEncoder',
     'AP_ExternalAHRS',
+    'AP_VideoTX',
+    'AP_FETtecOneWire',
 ]
 
 def get_legacy_defines(sketch_name):
@@ -128,6 +130,8 @@ def ap_autoconfigure(execute_method):
         """
         Wraps :py:func:`waflib.Context.Context.execute` on the context class
         """
+        if 'tools/' in self.targets:
+            raise Errors.WafError('\"tools\" name has been replaced with \"tool\" for build please use that!')
         if not Configure.autoconfig:
             return execute_method(self)
 

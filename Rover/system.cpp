@@ -60,15 +60,22 @@ void Rover::init_ardupilot()
     log_init();
 #endif
 
+#if HAL_AIS_ENABLED
+    g2.ais.init();
+#endif
+
     // initialise compass
     AP::compass().set_log_bit(MASK_LOG_COMPASS);
     AP::compass().init();
 
     // initialise rangefinder
+    rangefinder.set_log_rfnd_bit(MASK_LOG_RANGEFINDER);
     rangefinder.init(ROTATION_NONE);
 
+#if HAL_PROXIMITY_ENABLED
     // init proximity sensor
     g2.proximity.init();
+#endif
 
     // init beacons used for non-gps position estimation
     g2.beacon.init();
@@ -84,11 +91,16 @@ void Rover::init_ardupilot()
     ins.set_log_raw_bit(MASK_LOG_IMU_RAW);
 
     init_rc_in();            // sets up rc channels deadzone
-    g2.motors.init();        // init motors including setting servo out channels ranges
+    g2.motors.init(get_frame_type());        // init motors including setting servo out channels ranges
     SRV_Channels::enable_aux_servos();
 
     // init wheel encoders
     g2.wheel_encoder.init();
+
+#if HAL_TORQEEDO_ENABLED
+    // init torqeedo motor driver
+    g2.torqeedo.init();
+#endif
 
     relay.init();
 
@@ -249,7 +261,7 @@ void Rover::startup_INS_ground(void)
     ahrs.init();
     // say to EKF that rover only move by going forward
     ahrs.set_fly_forward(true);
-    ahrs.set_vehicle_class(AHRS_VEHICLE_GROUND);
+    ahrs.set_vehicle_class(AP_AHRS::VehicleClass::GROUND);
 
     ins.init(scheduler.get_loop_rate_hz());
     ahrs.reset();
