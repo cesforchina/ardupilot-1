@@ -130,7 +130,8 @@ void AP_Logger_File::periodic_1Hz()
         erase.was_logging) {
         // restart logging after an erase if needed
         erase.was_logging = false;
-        start_new_log();
+        // setup to open the log in the backend thread
+        start_new_log_pending = true;
     }
     
     if (_initialised &&
@@ -138,15 +139,8 @@ void AP_Logger_File::periodic_1Hz()
         _write_fd == -1 && _read_fd == -1 &&
         logging_enabled() &&
         !recent_open_error()) {
-        // retry logging open. This allows for booting with
-        // LOG_DISARMED=1 with a bad microSD or no microSD. Once a
-        // card is inserted then logging starts
-        // this also allows for logging to start after forced arming
-        if (!hal.util->get_soft_armed()) {
-            start_new_log();
-        } else {
-            start_new_log_pending = true;
-        }
+        // setup to open the log in the backend thread
+        start_new_log_pending = true;
     }
 
     if (!io_thread_alive()) {
@@ -155,17 +149,9 @@ void AP_Logger_File::periodic_1Hz()
             // we register the IO timer callback
             GCS_SEND_TEXT(MAV_SEVERITY_CRITICAL, "AP_Logger: stuck thread (%s)", last_io_operation);
         }
-        if (io_thread_warning_decimation_counter++ > 57) {
+        if (io_thread_warning_decimation_counter++ > 30) {
             io_thread_warning_decimation_counter = 0;
         }
-        // If you try to close the file here then it will almost
-        // certainly block.  Since this is the main thread, this is
-        // likely to cause a crash.
-
-        // semaphore_write_fd not taken here as if the io thread is
-        // dead it may not release lock...
-        _write_fd = -1;
-        _initialised = false;
     }
 
     if (rate_limiter == nullptr && _front._params.file_ratemax > 0) {
@@ -899,13 +885,13 @@ void AP_Logger_File::flush(void)
 
 void AP_Logger_File::io_timer(void)
 {
+    uint32_t tnow = AP_HAL::millis();
+    _io_timer_heartbeat = tnow;
+
     if (start_new_log_pending) {
         start_new_log();
         start_new_log_pending = false;
     }
-
-    uint32_t tnow = AP_HAL::millis();
-    _io_timer_heartbeat = tnow;
 
     if (erase.log_num != 0) {
         // continue erase
@@ -1016,12 +1002,15 @@ void AP_Logger_File::io_timer(void)
 bool AP_Logger_File::io_thread_alive() const
 {
     if (!hal.scheduler->is_system_initialized()) {
-        // the system has long pauses during initialisation
-        return false;
+        // the system has long pauses during initialisation, assume still OK
+        return true;
     }
     // if the io thread hasn't had a heartbeat in a while then it is
-    // considered dead. Three seconds is enough time for a sdcard remount.
-    uint32_t timeout_ms = 3000;
+#if CONFIG_HAL_BOARD == HAL_BOARD_ESP32
+    uint32_t timeout_ms = 10000;
+#else
+    uint32_t timeout_ms = 5000;
+#endif
 #if CONFIG_HAL_BOARD == HAL_BOARD_SITL && !defined(HAL_BUILD_AP_PERIPH)
     // the IO thread is working with hardware - writing to a physical
     // disk.  Unfortunately these hardware devices do not obey our

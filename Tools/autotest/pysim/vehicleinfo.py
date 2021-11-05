@@ -150,6 +150,11 @@ class VehicleInfo(object):
                 "default_params_filename": ["default_params/copter-heli.parm",
                                             "default_params/copter-heli-dual.parm"],
             },
+            "heli-blade360": {
+                "waf_target": "bin/arducopter-heli",
+                "default_params_filename": ["default_params/copter-heli.parm",
+                ],
+            },
             "singlecopter": {
                 "waf_target": "bin/arducopter",
                 "default_params_filename": "default_params/copter-single.parm",
@@ -193,14 +198,17 @@ class VehicleInfo(object):
             #     "default_params_filename": ["default_params/copter-heli.parm",
             #                                 "default_params/copter-heli-compound.parm"],
             # },
+            "heli-blade360": {
+                "waf_target": "bin/arducopter-heli",
+                "default_params_filename": ["default_params/copter-heli.parm",
+                ],
+            },
         },
     },
     "Blimp": {
-        "default_frame": "quad",
+        "default_frame": "Blimp",
         "frames": {
-            # BLIMP
-            "quad": {
-                "model": "+",
+            "Blimp": {
                 "waf_target": "bin/blimp",
                 "default_params_filename": "default_params/blimp.parm",
             },
@@ -253,6 +261,10 @@ class VehicleInfo(object):
             "plane-jet": {
                 "waf_target": "bin/arduplane",
                 "default_params_filename": ["default_params/plane.parm", "default_params/plane-jet.parm"],
+            },
+            "quadplane-copter_tailsitter": {
+                "waf_target": "bin/arduplane",
+                "default_params_filename": ["default_params/quadplane.parm","default_params/quadplane-copter_tailsitter.parm"],
             },
             "plane": {
                 "waf_target": "bin/arduplane",

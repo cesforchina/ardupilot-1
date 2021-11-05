@@ -133,6 +133,9 @@ static const uint32_t flash_memmap[STM32_FLASH_NPAGES] = { KB(32), KB(32), KB(32
 #elif defined(STM32G4)
 #define STM32_FLASH_NPAGES (BOARD_FLASH_SIZE/2)
 #define STM32_FLASH_FIXED_PAGE_SIZE 2
+#elif defined(STM32L4)
+#define STM32_FLASH_NPAGES (BOARD_FLASH_SIZE/2)
+#define STM32_FLASH_FIXED_PAGE_SIZE 2
 #else
 #error "Unsupported processor for flash.c"
 #endif
@@ -141,6 +144,10 @@ static const uint32_t flash_memmap[STM32_FLASH_NPAGES] = { KB(32), KB(32), KB(32
 #ifdef STORAGE_FLASH_PAGE
 static_assert(STORAGE_FLASH_PAGE < STM32_FLASH_NPAGES,
               "STORAGE_FLASH_PAGE out of range");
+#endif
+#ifdef HAL_CRASH_DUMP_FLASH_PAGE
+static_assert(HAL_CRASH_DUMP_FLASH_PAGE < STM32_FLASH_NPAGES,
+              "HAL_CRASH_DUMP_FLASH_PAGE out of range");
 #endif
 #endif
 
@@ -414,6 +421,10 @@ bool stm32_flash_erasepage(uint32_t page)
     // there is an 8th bit
     FLASH->CR |= page<<FLASH_CR_PNB_Pos;
     FLASH->CR |= FLASH_CR_STRT;
+#elif defined(STM32L4)
+    FLASH->CR = FLASH_CR_PER;
+    FLASH->CR |= page<<FLASH_CR_PNB_Pos;
+    FLASH->CR |= FLASH_CR_STRT;
 #else
 #error "Unsupported MCU"
 #endif
@@ -541,7 +552,7 @@ static bool stm32_flash_write_f4f7(uint32_t addr, const void *buf, uint32_t coun
         return false;
     }
 
-    if ((addr+count) >= STM32_FLASH_BASE+STM32_FLASH_SIZE) {
+    if ((addr+count) > STM32_FLASH_BASE+STM32_FLASH_SIZE) {
         return false;
     }
 
@@ -642,7 +653,7 @@ static bool stm32_flash_write_f1(uint32_t addr, const void *buf, uint32_t count)
         return false;
     }
 
-    if ((addr+count) >= STM32_FLASH_BASE+STM32_FLASH_SIZE) {
+    if ((addr+count) > STM32_FLASH_BASE+STM32_FLASH_SIZE) {
         _flash_fail_line = __LINE__;
         return false;
     }
@@ -693,7 +704,7 @@ failed:
 }
 #endif // STM32F1 or STM32F3
 
-#if defined(STM32G4)
+#if defined(STM32G4) || defined(STM32L4)
 static bool stm32_flash_write_g4(uint32_t addr, const void *buf, uint32_t count)
 {
     uint32_t *b = (uint32_t *)buf;
@@ -704,7 +715,7 @@ static bool stm32_flash_write_g4(uint32_t addr, const void *buf, uint32_t count)
         return false;
     }
 
-    if ((addr+count) >= STM32_FLASH_BASE+STM32_FLASH_SIZE) {
+    if ((addr+count) > STM32_FLASH_BASE+STM32_FLASH_SIZE) {
         _flash_fail_line = __LINE__;
         return false;
     }
@@ -778,7 +789,7 @@ bool stm32_flash_write(uint32_t addr, const void *buf, uint32_t count)
     return stm32_flash_write_f4f7(addr, buf, count);
 #elif defined(STM32H7)
     return stm32_flash_write_h7(addr, buf, count);
-#elif defined(STM32G4)
+#elif defined(STM32G4) || defined(STM32L4)
     return stm32_flash_write_g4(addr, buf, count);
 #else
 #error "Unsupported MCU"

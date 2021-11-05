@@ -25,6 +25,7 @@
 #include <AP_BoardConfig/AP_BoardConfig.h>     // board configuration library
 #include <AP_CANManager/AP_CANManager.h>
 #include <AP_Button/AP_Button.h>
+#include <AP_EFI/AP_EFI.h>
 #include <AP_GPS/AP_GPS.h>
 #include <AP_Generator/AP_Generator.h>
 #include <AP_Logger/AP_Logger.h>
@@ -46,6 +47,9 @@
 #include <AP_Frsky_Telem/AP_Frsky_Parameters.h>
 #include <AP_ExternalAHRS/AP_ExternalAHRS.h>
 #include <AP_VideoTX/AP_SmartAudio.h>
+#if CONFIG_HAL_BOARD == HAL_BOARD_SITL
+#include <SITL/SITL.h>
+#endif
 
 class AP_Vehicle : public AP_HAL::HAL::Callbacks {
 
@@ -84,6 +88,12 @@ public:
     ModeReason get_control_mode_reason() const {
         return control_mode_reason;
     }
+
+    // perform any notifications required to indicate a mode change
+    // failed due to a bad mode number being supplied.  This can
+    // happen for many reasons - bad mavlink packet and bad mode
+    // parameters for example.
+    void notify_no_such_mode(uint8_t mode_number);
 
     /*
       common parameters for fixed wing aircraft
@@ -333,7 +343,7 @@ protected:
     AP_MSP msp;
 #endif
 
-#if GENERATOR_ENABLED
+#if HAL_GENERATOR_ENABLED
     AP_Generator generator;
 #endif
 
@@ -345,6 +355,11 @@ protected:
     AP_SmartAudio smartaudio;
 #endif
 
+#if HAL_EFI_ENABLED
+    // EFI Engine Monitor
+    AP_EFI efi;
+#endif
+
     static const struct AP_Param::GroupInfo var_info[];
     static const struct AP_Scheduler::Task scheduler_tasks[];
 
@@ -352,7 +367,14 @@ protected:
     void publish_osd_info();
 #endif
 
+    // update accel calibration
+    void accel_cal_update();
+
     ModeReason control_mode_reason = ModeReason::UNKNOWN;
+
+#if CONFIG_HAL_BOARD == HAL_BOARD_SITL
+    SITL::SIM sitl;
+#endif
 
 private:
 

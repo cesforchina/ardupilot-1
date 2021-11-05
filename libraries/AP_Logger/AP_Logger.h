@@ -67,6 +67,10 @@
 
 #endif
 
+#ifndef HAL_LOGGER_FILE_CONTENTS_ENABLED
+#define HAL_LOGGER_FILE_CONTENTS_ENABLED HAL_LOGGING_FILESYSTEM_ENABLED
+#endif
+
 #include <AP_HAL/AP_HAL.h>
 #include <AP_AHRS/AP_AHRS.h>
 #include <AP_AHRS/AP_AHRS_DCM.h>
@@ -84,7 +88,6 @@
 #include <stdint.h>
 
 #include "LoggerMessageWriter.h"
-
 
 class AP_Logger_Backend;
 class AP_AHRS;
@@ -317,7 +320,11 @@ public:
     void Write_Mode(uint8_t mode, const ModeReason reason);
 
     void Write_EntireMission();
-    void Write_Command(const mavlink_command_int_t &packet, MAV_RESULT result, bool was_command_long=false);
+    void Write_Command(const mavlink_command_int_t &packet,
+                       uint8_t source_system,
+                       uint8_t source_component,
+                       MAV_RESULT result,
+                       bool was_command_long=false);
     void Write_Mission_Cmd(const AP_Mission &mission,
                                const AP_Mission::Mission_Command &cmd);
     void Write_RPM(const AP_RPM &rpm_sensor);
@@ -330,8 +337,9 @@ public:
 #endif
     void Write_SRTL(bool active, uint16_t num_points, uint16_t max_points, uint8_t action, const Vector3f& point);
     void Write_Winch(bool healthy, bool thread_end, bool moving, bool clutch, uint8_t mode, float desired_length, float length, float desired_rate, uint16_t tension, float voltage, int8_t temp);
-    void Write_PSC(const Vector3f &pos_target, const Vector3f &position, const Vector3f &vel_target, const Vector3f &velocity, const Vector3f &accel_target, const float &accel_x, const float &accel_y);
-    void Write_PSCZ(float pos_target_z, float pos_z, float vel_desired_z, float vel_target_z, float vel_z, float accel_desired_z, float accel_target_z, float accel_z, float throttle_out);
+    void Write_PSCN(float pos_target, float pos, float vel_desired, float vel_target, float vel, float accel_desired, float accel_target, float accel);
+    void Write_PSCE(float pos_target, float pos, float vel_desired, float vel_target, float vel, float accel_desired, float accel_target, float accel);
+    void Write_PSCD(float pos_target, float pos, float vel_desired, float vel_target, float vel, float accel_desired, float accel_target, float accel);
 
     void Write(const char *name, const char *labels, const char *fmt, ...);
     void Write(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, ...);
@@ -380,6 +388,7 @@ public:
 
     // accesss to public parameters
     void set_force_log_disarmed(bool force_logging) { _force_log_disarmed = force_logging; }
+    void set_long_log_persist(bool b) { _force_long_log_persist = b; }
     bool log_while_disarmed(void) const;
     uint8_t log_replay(void) const { return _params.log_replay; }
 
@@ -458,6 +467,9 @@ public:
         return _log_start_count;
     }
 
+    // add a filename to list of files to log. The name must be a constant string, not allocated
+    void log_file_content(const char *name);
+
 protected:
 
     const struct LogStructure *_structures;
@@ -533,6 +545,7 @@ private:
 
     bool _writes_enabled:1;
     bool _force_log_disarmed:1;
+    bool _force_long_log_persist:1;
 
     // remember formats for replay
     void save_format_Replay(const void *pBuffer);
@@ -543,6 +556,21 @@ private:
     void start_io_thread(void);
     void io_thread();
 
+#if HAL_LOGGER_FILE_CONTENTS_ENABLED
+    // support for logging file content
+    struct file_list {
+        struct file_list *next;
+        const char *filename;
+    };
+    struct {
+        struct file_list *head, *tail;
+        int fd;
+        uint16_t offset;
+        HAL_Semaphore sem;
+    } file_content;
+    void file_content_update(void);
+#endif
+    
     /* support for retrieving logs via mavlink: */
 
     enum class TransferActivity {
@@ -553,6 +581,7 @@ private:
 
     // last time we handled a log-transfer-over-mavlink message:
     uint32_t _last_mavlink_log_transfer_message_handled_ms;
+    bool _warned_log_disarm; // true if we have sent a message warning to disarm for logging
 
     // next log list entry to send
     uint16_t _log_next_list_entry;
@@ -588,7 +617,6 @@ private:
     // can be used by other subsystems to detect if they should log data
     uint8_t _log_start_count;
 
-    bool should_handle_log_message() const;
     void handle_log_message(class GCS_MAVLINK &, const mavlink_message_t &msg);
 
     void handle_log_request_list(class GCS_MAVLINK &, const mavlink_message_t &msg);

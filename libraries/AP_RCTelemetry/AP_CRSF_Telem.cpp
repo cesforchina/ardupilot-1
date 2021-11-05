@@ -96,7 +96,7 @@ void AP_CRSF_Telem::setup_custom_telemetry()
     }
 
     // check if passthru already assigned
-    const int8_t frsky_port = AP::serialmanager().find_portnum(AP_SerialManager::SerialProtocol_FrSky_SPort_Passthrough,0); 
+    const int8_t frsky_port = AP::serialmanager().find_portnum(AP_SerialManager::SerialProtocol_FrSky_SPort_Passthrough,0);
     if (frsky_port != -1) {
         gcs().send_text(MAV_SEVERITY_CRITICAL, "CRSF: passthrough telemetry conflict on SERIAL%d",frsky_port);
        _custom_telem.init_done = true;
@@ -282,7 +282,10 @@ void AP_CRSF_Telem::adjust_packet_weight(bool queue_empty)
      We start a "fast parameter window" that we close after 5sec
     */
     bool expired = (now_ms - _custom_telem.params_mode_start_ms) > 5000;
-    if (!_custom_telem.params_mode_active && _pending_request.frame_type > 0) {
+    if (!_custom_telem.params_mode_active
+        && _pending_request.frame_type > 0
+        && _pending_request.frame_type != AP_RCProtocol_CRSF::CRSF_FRAMETYPE_PARAM_DEVICE_INFO
+        && !hal.util->get_soft_armed()) {
         // fast window start
         _custom_telem.params_mode_start_ms = now_ms;
         _custom_telem.params_mode_active = true;
@@ -311,7 +314,7 @@ bool AP_CRSF_Telem::is_packet_ready(uint8_t idx, bool queue_empty)
                 gcs().send_text(MAV_SEVERITY_DEBUG,"CRSF: RX device ping failed");
             } else {
                 _pending_request.destination = AP_RCProtocol_CRSF::CRSF_ADDRESS_CRSF_RECEIVER;
-                _pending_request.frame_type = AP_RCProtocol_CRSF::CRSF_FRAMETYPE_PARAM_DEVICE_INFO;
+                _pending_request.frame_type = AP_RCProtocol_CRSF::CRSF_FRAMETYPE_PARAM_DEVICE_PING;
                 gcs().send_text(MAV_SEVERITY_DEBUG,"CRSF: requesting RX device info");
             }
         }
@@ -515,7 +518,7 @@ void AP_CRSF_Telem::process_ping_frame(ParameterPingFrame* ping)
     }
 
     _param_request.origin = ping->origin;
-    _pending_request.frame_type = AP_RCProtocol_CRSF::CRSF_FRAMETYPE_PARAM_DEVICE_PING;
+    _pending_request.frame_type = AP_RCProtocol_CRSF::CRSF_FRAMETYPE_PARAM_DEVICE_INFO;
 }
 
 // request for device info
@@ -606,20 +609,21 @@ void AP_CRSF_Telem::update()
 
 void AP_CRSF_Telem::update_params()
 {
-    uint32_t now = AP_HAL::millis();
-    // reset parameter passthrough timeout
-    _custom_telem.params_mode_start_ms = now;
-
     // handle general parameter requests
     switch (_pending_request.frame_type) {
-    case AP_RCProtocol_CRSF::CRSF_FRAMETYPE_PARAM_DEVICE_PING:
+    // construct a response to a ping frame
+    case AP_RCProtocol_CRSF::CRSF_FRAMETYPE_PARAM_DEVICE_INFO:
+        _custom_telem.params_mode_start_ms = AP_HAL::millis();
         calc_device_info();
         break;
-    case AP_RCProtocol_CRSF::CRSF_FRAMETYPE_PARAMETER_READ:
-        calc_parameter();
-        break;
-    case AP_RCProtocol_CRSF::CRSF_FRAMETYPE_PARAM_DEVICE_INFO:
+    // construct a ping frame originating here
+    case AP_RCProtocol_CRSF::CRSF_FRAMETYPE_PARAM_DEVICE_PING:
         calc_device_ping();
+        break;
+    case AP_RCProtocol_CRSF::CRSF_FRAMETYPE_PARAMETER_READ:
+        // reset parameter passthrough timeout
+        _custom_telem.params_mode_start_ms = AP_HAL::millis();
+        calc_parameter();
         break;
     default:
         break;
@@ -756,7 +760,10 @@ void AP_CRSF_Telem::calc_battery()
         used_mah = 0;
     }
 
-    _telem.bcast.battery.remaining = _battery.capacity_remaining_pct(0);
+    uint8_t percentage = 0;
+    IGNORE_RETURN(_battery.capacity_remaining_pct(percentage, 0));
+
+    _telem.bcast.battery.remaining = percentage;
 
     const int32_t capacity = used_mah;
     _telem.bcast.battery.capacity[0] = (capacity & 0xFF0000) >> 16;
@@ -810,9 +817,10 @@ void AP_CRSF_Telem::calc_flight_mode()
 {
     AP_Notify * notify = AP_Notify::get_singleton();
     if (notify) {
-        hal.util->snprintf(_telem.bcast.flightmode.flight_mode, 16, "%s", notify->get_flight_mode_str());
-
-        _telem_size = sizeof(AP_CRSF_Telem::FlightModeFrame);
+        // Note: snprintf() always terminates the string
+        hal.util->snprintf(_telem.bcast.flightmode.flight_mode, sizeof(AP_CRSF_Telem::FlightModeFrame), "%s", notify->get_flight_mode_str());
+        // Note: strlen(_telem.bcast.flightmode.flight_mode) is safe because called on a guaranteed null terminated string
+        _telem_size = strlen(_telem.bcast.flightmode.flight_mode) + 1; //send the terminator as well
         _telem_type = AP_RCProtocol_CRSF::CRSF_FRAMETYPE_FLIGHT_MODE;
         _telem_pending = true;
     }
@@ -1271,10 +1279,11 @@ void AP_CRSF_Telem::calc_status_text()
     _telem_type = get_custom_telem_frame_id();
     _telem.bcast.custom_telem.status_text.sub_type = AP_RCProtocol_CRSF::CustomTelemSubTypeID::CRSF_AP_CUSTOM_TELEM_STATUS_TEXT;
     _telem.bcast.custom_telem.status_text.severity = _statustext.next.severity;
-    strncpy_noterm(_telem.bcast.custom_telem.status_text.text, _statustext.next.text, PASSTHROUGH_STATUS_TEXT_FRAME_MAX_SIZE);
-    // add a potentially missing terminator
-    _telem.bcast.custom_telem.status_text.text[PASSTHROUGH_STATUS_TEXT_FRAME_MAX_SIZE-1] = 0;
-    _telem_size = 2 + PASSTHROUGH_STATUS_TEXT_FRAME_MAX_SIZE; // sub_type(1) + severity(1) + text(50)
+    // Note: snprintf() always terminates the string
+    hal.util->snprintf(_telem.bcast.custom_telem.status_text.text, AP_CRSF_Telem::PASSTHROUGH_STATUS_TEXT_FRAME_MAX_SIZE, "%s", _statustext.next.text);
+    // frame size = sub_type(1) + severity(1) + strlen(text) + terminator
+    // Note: strlen(_telem.bcast.custom_telem.status_text.text) is safe because called on a guaranteed null terminated string
+    _telem_size = 2 + strlen(_telem.bcast.custom_telem.status_text.text) + 1;
     _telem_pending = true;
     _statustext.available = false;
 }

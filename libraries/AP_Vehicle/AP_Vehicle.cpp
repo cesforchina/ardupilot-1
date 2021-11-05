@@ -49,7 +49,7 @@ const AP_Param::GroupInfo AP_Vehicle::var_info[] = {
     AP_SUBGROUPINFO(frsky_parameters, "FRSKY_", 6, AP_Vehicle, AP_Frsky_Parameters),
 #endif
 
-#if GENERATOR_ENABLED
+#if HAL_GENERATOR_ENABLED
     // @Group: GEN_
     // @Path: ../AP_Generator/AP_Generator.cpp
     AP_SUBGROUPINFO(generator, "GEN_", 7, AP_Vehicle, AP_Generator),
@@ -59,6 +59,12 @@ const AP_Param::GroupInfo AP_Vehicle::var_info[] = {
     // @Group: EAHRS
     // @Path: ../AP_ExternalAHRS/AP_ExternalAHRS.cpp
     AP_SUBGROUPINFO(externalAHRS, "EAHRS", 8, AP_Vehicle, AP_ExternalAHRS),
+#endif
+
+#if HAL_EFI_ENABLED
+    // @Group: EFI
+    // @Path: ../AP_EFI/AP_EFI.cpp
+    AP_SUBGROUPINFO(efi, "EFI", 9, AP_Vehicle, AP_EFI),
 #endif
 
     AP_GROUPEND
@@ -171,9 +177,15 @@ void AP_Vehicle::setup()
 
     send_watchdog_reset_statustext();
 
-#if GENERATOR_ENABLED
+#if HAL_GENERATOR_ENABLED
     generator.init();
 #endif
+
+// init EFI monitoring
+#if HAL_EFI_ENABLED
+    efi.init();
+#endif
+
     gcs().send_text(MAV_SEVERITY_INFO, "ArduPilot Ready");
 }
 
@@ -236,11 +248,15 @@ const AP_Scheduler::Task AP_Vehicle::scheduler_tasks[] = {
 #if HAL_WITH_ESC_TELEM
     SCHED_TASK_CLASS(AP_ESC_Telem, &vehicle.esc_telem,      update,                   10,  50),
 #endif
-#if GENERATOR_ENABLED
+#if HAL_GENERATOR_ENABLED
     SCHED_TASK_CLASS(AP_Generator, &vehicle.generator,      update,                   10,  50),
 #endif
 #if OSD_ENABLED
     SCHED_TASK(publish_osd_info, 1, 10),
+#endif
+    SCHED_TASK(accel_cal_update,      10,    100),
+#if HAL_EFI_ENABLED
+    SCHED_TASK_CLASS(AP_EFI,       &vehicle.efi,            update,                   10, 200),
 #endif
 };
 
@@ -355,6 +371,12 @@ void AP_Vehicle::update_dynamic_notch_at_specified_rate()
     }
 }
 
+void AP_Vehicle::notify_no_such_mode(uint8_t mode_number)
+{
+    GCS_SEND_TEXT(MAV_SEVERITY_WARNING,"No such mode %u", mode_number);
+    AP::logger().Write_Error(LogErrorSubsystem::FLIGHT_MODE, LogErrorCode(mode_number));
+}
+
 // reboot the vehicle in an orderly manner, doing various cleanups and
 // flashing LEDs as appropriate
 void AP_Vehicle::reboot(bool hold_in_bootloader)
@@ -422,6 +444,38 @@ void AP_Vehicle::get_osd_roll_pitch_rad(float &roll, float &pitch) const
 }
 
 #endif
+
+#ifndef HAL_CAL_ALWAYS_REBOOT
+// allow for forced reboot after accelcal
+#define HAL_CAL_ALWAYS_REBOOT 0
+#endif
+
+/*
+  update accel cal
+ */
+void AP_Vehicle::accel_cal_update()
+{
+#if HAL_INS_ENABLED
+    if (hal.util->get_soft_armed()) {
+        return;
+    }
+    ins.acal_update();
+    // check if new trim values, and set them
+    Vector3f trim_rad;
+    if (ins.get_new_trim(trim_rad)) {
+        ahrs.set_trim(trim_rad);
+    }
+
+#if HAL_CAL_ALWAYS_REBOOT
+    if (ins.accel_cal_requires_reboot() &&
+        !hal.util->get_soft_armed()) {
+        hal.scheduler->delay(1000);
+        hal.scheduler->reboot(false);
+    }
+#endif
+#endif // HAL_INS_ENABLED
+}
+
 
 AP_Vehicle *AP_Vehicle::_singleton = nullptr;
 

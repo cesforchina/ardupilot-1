@@ -22,6 +22,28 @@
 
 #define AP_MOTORS_MAX_NUM_MOTORS 12
 
+#ifndef FRAME_QUAD
+#define FRAME_QUAD 1
+#endif
+#ifndef FRAME_HEXA
+#define FRAME_HEXA 1
+#endif
+#ifndef FRAME_OCTA
+#define FRAME_OCTA 1
+#endif
+#ifndef FRAME_DECA
+#define FRAME_DECA 1
+#endif
+#ifndef FRAME_DODECAHEXA
+#define FRAME_DODECAHEXA 1
+#endif
+#ifndef FRAME_Y6
+#define FRAME_Y6 1
+#endif
+#ifndef FRAME_OCTAQUAD
+#define FRAME_OCTAQUAD 1
+#endif
+
 // motor update rate
 #define AP_MOTORS_SPEED_DEFAULT     490 // default output rate to the motors
 
@@ -70,6 +92,7 @@ public:
         MOTOR_FRAME_TYPE_NYT_PLUS = 16, // plus frame, no differential torque for yaw
         MOTOR_FRAME_TYPE_NYT_X = 17, // X frame, no differential torque for yaw
         MOTOR_FRAME_TYPE_BF_X_REV = 18, // X frame, betaflight ordering, reversed motors
+        MOTOR_FRAME_TYPE_Y4 = 19, //Y4 Quadrotor frame
     };
 
     // return string corresponding to frame_type
@@ -219,16 +242,14 @@ public:
     // This function is overriden in motors_heli class.   Always true for multicopters.
     virtual bool init_targets_on_arming() const { return true; }
 
-    enum pwm_type { PWM_TYPE_NORMAL     = 0,
-                    PWM_TYPE_ONESHOT    = 1,
-                    PWM_TYPE_ONESHOT125 = 2,
-                    PWM_TYPE_BRUSHED    = 3,
-                    PWM_TYPE_DSHOT150   = 4,
-                    PWM_TYPE_DSHOT300   = 5,
-                    PWM_TYPE_DSHOT600   = 6,
-                    PWM_TYPE_DSHOT1200  = 7,
-                    PWM_TYPE_PWM_RANGE  = 8 };
-    pwm_type            get_pwm_type(void) const { return (pwm_type)_pwm_type.get(); }
+    // returns true if the configured PWM type is digital and should have fixed endpoints
+    bool is_digital_pwm_type() const;
+
+    // returns true is pwm type is brushed
+    bool is_brushed_pwm_type() const { return _pwm_type == PWM_TYPE_BRUSHED; }
+
+    // returns true is pwm type is normal
+    bool is_normal_pwm_type() const { return (_pwm_type == PWM_TYPE_NORMAL) || (_pwm_type == PWM_TYPE_PWM_RANGE); }
 
     MAV_TYPE get_frame_mav_type() const { return _mav_type; }
 
@@ -299,6 +320,16 @@ protected:
     float               _thrust_boost_ratio;    // choice between highest and second highest motor output for output mixing (0 ~ 1). Zero is normal operation
 
     MAV_TYPE _mav_type; // MAV_TYPE_GENERIC = 0;
+
+    enum pwm_type { PWM_TYPE_NORMAL     = 0,
+                    PWM_TYPE_ONESHOT    = 1,
+                    PWM_TYPE_ONESHOT125 = 2,
+                    PWM_TYPE_BRUSHED    = 3,
+                    PWM_TYPE_DSHOT150   = 4,
+                    PWM_TYPE_DSHOT300   = 5,
+                    PWM_TYPE_DSHOT600   = 6,
+                    PWM_TYPE_DSHOT1200  = 7,
+                    PWM_TYPE_PWM_RANGE  = 8 };
 
 private:
 

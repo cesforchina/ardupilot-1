@@ -50,6 +50,9 @@ bool ModeAuto::init(bool ignore_checks)
         // clear guided limits
         copter.mode_guided.limit_clear();
 
+        // reset flag indicating if pilot has applied roll or pitch inputs during landing
+        copter.ap.land_repo_active = false;
+
 #if PRECISION_LANDING == ENABLED
         // initialise precland state machine
         copter.precland_statemachine.init();
@@ -151,8 +154,10 @@ void ModeAuto::run()
     }
 
     // only pretend to be in auto RTL so long as mission still thinks its in a landing sequence or the mission has completed
-    if (!(mission.get_in_landing_sequence_flag() || mission.state() == AP_Mission::mission_state::MISSION_COMPLETE)) {
+    if (auto_RTL && (!(mission.get_in_landing_sequence_flag() || mission.state() == AP_Mission::mission_state::MISSION_COMPLETE))) {
         auto_RTL = false;
+        // log exit from Auto RTL
+        copter.logger.Write_Mode((uint8_t)copter.flightmode->mode_number(), ModeReason::AUTO_RTL_EXIT);
     }
 }
 
@@ -169,13 +174,28 @@ bool ModeAuto::jump_to_landing_sequence_auto_RTL(ModeReason reason)
         // if not already in auto switch to auto
         if ((copter.flightmode == &copter.mode_auto) || set_mode(Mode::Number::AUTO, reason)) {
             auto_RTL = true;
+            // log entry into AUTO RTL
+            copter.logger.Write_Mode((uint8_t)copter.flightmode->mode_number(), reason);
+
+            // make happy noise
+            if (copter.ap.initialised) {
+                AP_Notify::events.user_mode_change = 1;
+            }
             return true;
         }
         // mode change failed, revert force resume flag
         mission.set_force_resume(false);
-        return false;
+
+        gcs().send_text(MAV_SEVERITY_WARNING, "Mode change to AUTO RTL failed");
+    } else {
+        gcs().send_text(MAV_SEVERITY_WARNING, "Mode change to AUTO RTL failed: No landing sequence found");
     }
-    gcs().send_text(MAV_SEVERITY_INFO, "No landing sequence found");
+
+    AP::logger().Write_Error(LogErrorSubsystem::FLIGHT_MODE, LogErrorCode(Number::AUTO_RTL));
+    // make sad noise
+    if (copter.ap.initialised) {
+        AP_Notify::events.user_mode_change_failed = 1;
+    }
     return false;
 }
 
@@ -841,7 +861,7 @@ void ModeAuto::wp_run()
     float target_yaw_rate = 0;
     if (!copter.failsafe.radio && use_pilot_yaw()) {
         // get pilot's desired yaw rate
-        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->get_control_in());
+        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->norm_input_dz());
         if (!is_zero(target_yaw_rate)) {
             auto_yaw.set_mode(AUTO_YAW_HOLD);
         }
@@ -910,7 +930,7 @@ void ModeAuto::circle_run()
     float target_yaw_rate = 0;
     if (!copter.failsafe.radio && use_pilot_yaw()) {
         // get pilot's desired yaw rate
-        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->get_control_in());
+        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->norm_input_dz());
         if (!is_zero(target_yaw_rate)) {
             auto_yaw.set_mode(AUTO_YAW_HOLD);
         }
@@ -956,7 +976,7 @@ void ModeAuto::loiter_run()
     // accept pilot input of yaw
     float target_yaw_rate = 0;
     if (!copter.failsafe.radio && use_pilot_yaw()) {
-        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->get_control_in());
+        target_yaw_rate = get_pilot_desired_yaw_rate(channel_yaw->norm_input_dz());
     }
 
     // set motors to full range
@@ -1018,7 +1038,12 @@ void ModeAuto::loiter_to_alt_run()
     // get avoidance adjusted climb rate
     target_climb_rate = get_avoidance_adjusted_climbrate(target_climb_rate);
 
-    pos_control->set_pos_target_z_from_climb_rate_cm(target_climb_rate, false);
+    // update the vertical offset based on the surface measurement
+    copter.surface_tracking.update_surface_offset();
+
+    // Send the commanded climb rate to the position controller
+    pos_control->set_pos_target_z_from_climb_rate_cm(target_climb_rate);
+
     pos_control->update_z_controller();
 }
 
@@ -1636,7 +1661,7 @@ bool ModeAuto::verify_land()
         case State::Descending:
             // rely on THROTTLE_LAND mode to correctly update landing status
             retval = copter.ap.land_complete && (motors->get_spool_state() == AP_Motors::SpoolState::GROUND_IDLE);
-            if (retval && !mission.continue_after_land() && copter.motors->armed()) {
+            if (retval && !mission.continue_after_land_check_for_takeoff() && copter.motors->armed()) {
                 /*
                   we want to stop mission processing on land
                   completion. Disarm now, then return false. This

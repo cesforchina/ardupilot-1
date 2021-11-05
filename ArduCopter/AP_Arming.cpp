@@ -746,7 +746,7 @@ bool AP_Arming_Copter::mandatory_checks(bool display_failure)
         result = false;
     }
 
-    return result;
+    return result & AP_Arming::mandatory_checks(display_failure);
 }
 
 void AP_Arming_Copter::set_pre_arm_check(bool b)
@@ -857,7 +857,7 @@ bool AP_Arming_Copter::arm(const AP_Arming::Method method, const bool do_arming_
     copter.ap.in_arming_delay = true;
 
     // assumed armed without a arming, switch. Overridden in switches.cpp
-    copter.ap.armed_with_switch = false;
+    copter.ap.armed_with_airmode_switch = false;
 
     // return success
     return true;

@@ -39,14 +39,21 @@ public:
         AVOID_ADSB    = 14,
         GUIDED        = 15,
         INITIALISING  = 16,
+#if HAL_QUADPLANE_ENABLED
         QSTABILIZE    = 17,
         QHOVER        = 18,
         QLOITER       = 19,
         QLAND         = 20,
         QRTL          = 21,
+#if QAUTOTUNE_ENABLED
         QAUTOTUNE     = 22,
+#endif
         QACRO         = 23,
+#endif
         THERMAL       = 24,
+#if HAL_QUADPLANE_ENABLED
+        LOITER_ALT_QLAND = 25,
+#endif
     };
 
     // Constructor
@@ -60,9 +67,6 @@ public:
 
     // run controllers specific to this mode
     virtual void run() {};
-
-    // init function, used only be quadplane modes, to be factored in to _enter() in the future
-    virtual void init() {};
 
     // returns a unique number specific to this mode
     virtual Number mode_number() const = 0;
@@ -87,6 +91,7 @@ public:
     virtual bool is_vtol_mode() const { return false; }
     virtual bool is_vtol_man_throttle() const;
     virtual bool is_vtol_man_mode() const { return false; }
+
     // guided or adsb mode
     virtual bool is_guided_mode() const { return false; }
 
@@ -113,7 +118,10 @@ public:
 
     // method for mode specific target altitude profiles
     virtual bool update_target_altitude() { return false; }
-    
+
+    // handle a guided target request from GCS
+    virtual bool handle_guided_request(Location target_loc) { return false; }
+
 protected:
 
     // subclasses override this to perform checks before entering the mode
@@ -122,13 +130,14 @@ protected:
     // subclasses override this to perform any required cleanup when exiting the mode
     virtual void _exit() { return; }
 
+#if HAL_QUADPLANE_ENABLED
     // References for convenience, used by QModes
-    QuadPlane& quadplane;
     AC_PosControl*& pos_control;
     AC_AttitudeControl_Multi*& attitude_control;
     AC_Loiter*& loiter_nav;
+    QuadPlane& quadplane;
     QuadPlane::PosControlState &poscontrol;
-
+#endif
 };
 
 
@@ -214,6 +223,9 @@ public:
 
     bool does_auto_throttle() const override { return true; }
 
+    // handle a guided target request from GCS
+    bool handle_guided_request(Location target_loc) override;
+
 protected:
 
     bool _enter() override;
@@ -266,6 +278,29 @@ protected:
     bool _enter() override;
 };
 
+#if HAL_QUADPLANE_ENABLED
+class ModeLoiterAltQLand : public ModeLoiter
+{
+public:
+
+    Number mode_number() const override { return Number::LOITER_ALT_QLAND; }
+    const char *name() const override { return "Loiter to QLAND"; }
+    const char *name4() const override { return "L2QL"; }
+
+    // handle a guided target request from GCS
+    bool handle_guided_request(Location target_loc) override;
+
+protected:
+    bool _enter() override;
+
+    void navigate() override;
+
+private:
+    void switch_qland();
+
+};
+#endif // HAL_QUADPLANE_ENABLED
+
 class ModeManual : public Mode
 {
 public:
@@ -276,10 +311,6 @@ public:
 
     // methods that affect movement of the vehicle in this mode
     void update() override;
-
-protected:
-
-    void _exit() override;
 };
 
 
@@ -445,6 +476,7 @@ protected:
 };
 #endif
 
+#if HAL_QUADPLANE_ENABLED
 class ModeQStabilize : public Mode
 {
 public:
@@ -465,8 +497,6 @@ public:
     bool _enter() override;
 
     void run() override;
-
-    void init() override;
 
 protected:
 private:
@@ -492,8 +522,6 @@ public:
 
     void run() override;
 
-    void init() override;
-
 protected:
 
     bool _enter() override;
@@ -517,8 +545,6 @@ public:
 
     void run() override;
 
-    void init() override;
-
 protected:
 
     bool _enter() override;
@@ -538,8 +564,6 @@ public:
     void update() override;
 
     void run() override;
-
-    void init() override;
 
     bool allows_arming() const override { return false; }
 
@@ -562,8 +586,6 @@ public:
     void update() override;
 
     void run() override;
-
-    void init() override;
 
     bool allows_arming() const override { return false; }
 
@@ -593,13 +615,12 @@ public:
 
     void run() override;
 
-    void init() override;
-
 protected:
 
     bool _enter() override;
 };
 
+#if QAUTOTUNE_ENABLED
 class ModeQAutotune : public Mode
 {
 public:
@@ -621,7 +642,9 @@ protected:
     bool _enter() override;
     void _exit() override;
 };
+#endif  // QAUTOTUNE_ENABLED
 
+#endif  // HAL_QUADPLANE_ENABLED
 
 class ModeTakeoff: public Mode
 {

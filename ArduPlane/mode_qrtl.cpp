@@ -1,16 +1,9 @@
 #include "mode.h"
 #include "Plane.h"
 
+#if HAL_QUADPLANE_ENABLED
+
 bool ModeQRTL::_enter()
-{
-    return plane.mode_qstabilize._enter();
-}
-
-
-/*
-  handle QRTL mode
- */
-void ModeQRTL::init()
 {
     // use do_RTL() to setup next_WP_loc
     plane.do_RTL(plane.home.alt + quadplane.qrtl_alt*100UL);
@@ -30,10 +23,11 @@ void ModeQRTL::init()
     int32_t to_alt;
     if (plane.current_loc.get_alt_cm(Location::AltFrame::ABSOLUTE,from_alt) && plane.next_WP_loc.get_alt_cm(Location::AltFrame::ABSOLUTE,to_alt)) {
         poscontrol.slow_descent = from_alt > to_alt;
-        return;
+        return true;
     }
     // defualt back to old method
     poscontrol.slow_descent = (plane.current_loc.alt > plane.next_WP_loc.alt);
+    return true;
 }
 
 void ModeQRTL::update()
@@ -47,9 +41,12 @@ void ModeQRTL::update()
 void ModeQRTL::run()
 {
     quadplane.vtol_position_controller();
-    if (poscontrol.get_state() >= QuadPlane::QPOS_POSITION2) {
+    if (poscontrol.get_state() > QuadPlane::QPOS_POSITION2) {
         // change target altitude to home alt
         plane.next_WP_loc.alt = plane.home.alt;
+    }
+    if (poscontrol.get_state() >= QuadPlane::QPOS_POSITION2) {
+        // start landing logic
         quadplane.verify_vtol_land();
     }
 }
@@ -86,3 +83,4 @@ bool ModeQRTL::update_target_altitude()
     return true;
 }
 
+#endif

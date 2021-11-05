@@ -81,7 +81,6 @@
 #include <AP_Parachute/AP_Parachute.h>
 #include <AP_ADSB/AP_ADSB.h>
 #include <AP_ICEngine/AP_ICEngine.h>
-#include <AP_EFI/AP_EFI.h>
 #include <AP_Gripper/AP_Gripper.h>
 #include <AP_Landing/AP_Landing.h>
 #include <AP_LandingGear/AP_LandingGear.h>     // Landing Gear library
@@ -117,10 +116,6 @@
 #endif
 #include "AP_Arming.h"
 
-#if CONFIG_HAL_BOARD == HAL_BOARD_SITL
-#include <SITL/SITL.h>
-#endif
-
 /*
   main APM:Plane class
  */
@@ -139,6 +134,9 @@ public:
     friend class RC_Channel_Plane;
     friend class RC_Channels_Plane;
     friend class Tailsitter;
+    friend class Tiltrotor;
+    friend class SLT_Transition;
+    friend class Tailsitter_Transition;
 
     friend class Mode;
     friend class ModeCircle;
@@ -165,6 +163,7 @@ public:
     friend class ModeQAutotune;
     friend class ModeTakeoff;
     friend class ModeThermal;
+    friend class ModeLoiterAltQLand;
 
     Plane(void);
 
@@ -210,10 +209,6 @@ private:
     AP_YawController yawController{aparm};
     AP_SteerController steerController{};
 
-#if CONFIG_HAL_BOARD == HAL_BOARD_SITL
-    SITL::SIM sitl;
-#endif
-
     // Training mode
     bool training_manual_roll;  // user has manual roll control
     bool training_manual_pitch; // user has manual pitch control
@@ -247,7 +242,7 @@ private:
 
     // Camera
 #if CAMERA == ENABLED
-    AP_Camera camera{MASK_LOG_CAMERA, current_loc};
+    AP_Camera camera{MASK_LOG_CAMERA};
 #endif
 
 #if OPTFLOW == ENABLED
@@ -283,16 +278,23 @@ private:
     ModeGuided mode_guided;
     ModeInitializing mode_initializing;
     ModeManual mode_manual;
+#if HAL_QUADPLANE_ENABLED
     ModeQStabilize mode_qstabilize;
     ModeQHover mode_qhover;
     ModeQLoiter mode_qloiter;
     ModeQLand mode_qland;
     ModeQRTL mode_qrtl;
     ModeQAcro mode_qacro;
+#if QAUTOTUNE_ENABLED
     ModeQAutotune mode_qautotune;
+#endif  // QAUTOTUNE_ENABLED
+#endif  // HAL_QUADPLANE_ENABLED
     ModeTakeoff mode_takeoff;
 #if HAL_SOARING_ENABLED
     ModeThermal mode_thermal;
+#endif
+#if HAL_QUADPLANE_ENABLED
+    ModeLoiterAltQLand mode_lotier_qland;
 #endif
 
     // This is the state of the flight control system
@@ -354,11 +356,13 @@ private:
         VTOL_LANDING,
     };
 
+#if HAL_QUADPLANE_ENABLED
     // Landing
     struct {
         enum Landing_ApproachStage approach_stage;
         float approach_direction_deg;
     } vtol_approach_s;
+#endif
 
     bool any_failsafe_triggered() {
         return failsafe.state != FAILSAFE_NONE || battery.has_failsafed() || failsafe.adsb;
@@ -598,6 +602,9 @@ private:
     // time since started flying in any mode in milliseconds
     uint32_t started_flying_ms;
 
+    // ground mode is true when disarmed and not flying
+    bool ground_mode;
+
     // Navigation control variables
     // The instantaneous desired bank angle.  Hundredths of a degree
     int32_t nav_roll_cd;
@@ -680,7 +687,6 @@ private:
         // The amount of time we should stay in a loiter for the Loiter Time command.  Milliseconds.
         uint32_t time_max_ms;
     } loiter;
-
 
     // Conditional command
     // A value used in condition commands (eg delay, change alt, etc.)
@@ -770,8 +776,10 @@ private:
     // time that rudder arming has been running
     uint32_t rudder_arm_timer;
 
+#if HAL_QUADPLANE_ENABLED
     // support for quadcopter-plane
     QuadPlane quadplane{ahrs};
+#endif
 
     // support for transmitter tuning
     AP_Tuning_Plane tuning;
@@ -789,6 +797,7 @@ private:
     bool terrain_disabled();
 #if AP_TERRAIN_AVAILABLE
     bool terrain_enabled_in_current_mode() const;
+    bool terrain_enabled_in_mode(Mode::Number num) const;
     enum class terrain_bitmask {
         ALL             = 1U << 0,
         FLY_BY_WIRE_B   = 1U << 1,
@@ -845,7 +854,9 @@ private:
     float get_speed_scaler(void);
     bool stick_mixing_enabled(void);
     void stabilize_roll(float speed_scaler);
+    float stabilize_roll_get_roll_out(float speed_scaler);
     void stabilize_pitch(float speed_scaler);
+    float stabilize_pitch_get_pitch_out(float speed_scaler);
     void stabilize_stick_mixing_direct();
     void stabilize_stick_mixing_fbw();
     void stabilize_yaw(float speed_scaler);
@@ -897,7 +908,9 @@ private:
     void do_takeoff(const AP_Mission::Mission_Command& cmd);
     void do_nav_wp(const AP_Mission::Mission_Command& cmd);
     void do_land(const AP_Mission::Mission_Command& cmd);
+#if HAL_QUADPLANE_ENABLED
     void do_landing_vtol_approach(const AP_Mission::Mission_Command& cmd);
+#endif
     void loiter_set_direction_wp(const AP_Mission::Mission_Command& cmd);
     void do_loiter_unlimited(const AP_Mission::Mission_Command& cmd);
     void do_loiter_turns(const AP_Mission::Mission_Command& cmd);
@@ -908,13 +921,16 @@ private:
     void do_vtol_takeoff(const AP_Mission::Mission_Command& cmd);
     void do_vtol_land(const AP_Mission::Mission_Command& cmd);
     bool verify_nav_wp(const AP_Mission::Mission_Command& cmd);
+#if HAL_QUADPLANE_ENABLED
     bool verify_landing_vtol_approach(const AP_Mission::Mission_Command& cmd);
+#endif
     void do_wait_delay(const AP_Mission::Mission_Command& cmd);
     void do_within_distance(const AP_Mission::Mission_Command& cmd);
     bool do_change_speed(const AP_Mission::Mission_Command& cmd);
     void do_set_home(const AP_Mission::Mission_Command& cmd);
     bool start_command_callback(const AP_Mission::Mission_Command &cmd);
     bool verify_command_callback(const AP_Mission::Mission_Command& cmd);
+    float get_wp_radius() const;
 
     // commands.cpp
     void set_guided_WP(void);
@@ -923,8 +939,10 @@ private:
     bool set_home_persistently(const Location &loc) WARN_IF_UNUSED;
 
     // quadplane.cpp
+#if HAL_QUADPLANE_ENABLED
     bool verify_vtol_takeoff(const AP_Mission::Mission_Command &cmd);
     bool verify_vtol_land(const AP_Mission::Mission_Command &cmd);
+#endif
 
     // control_modes.cpp
     void read_control_switch();
@@ -943,6 +961,7 @@ private:
     void failsafe_short_off_event(ModeReason reason);
     void failsafe_long_off_event(ModeReason reason);
     void handle_battery_failsafe(const char* type_str, const int8_t action);
+    bool failsafe_in_landing_sequence() const;  // returns true if the vehicle is in landing sequence.  Intended only for use in failsafe code.
 
 #if AC_FENCE == ENABLED
     // fence.cpp
@@ -978,17 +997,19 @@ private:
     void update_logging1(void);
     void update_logging2(void);
     void update_control_mode(void);
+    void update_fly_forward(void);
     void update_flight_stage();
     void set_flight_stage(AP_Vehicle::FixedWing::FlightStage fs);
 
     // navigation.cpp
-    void set_nav_controller(void);
     void loiter_angle_reset(void);
     void loiter_angle_update(void);
     void navigate();
     void calc_airspeed_errors();
+    float mode_auto_target_airspeed_cm();
     void calc_gndspeed_undershoot();
     void update_loiter(uint16_t radius);
+    void update_loiter_update_nav(uint16_t radius);
     void update_cruise();
     void update_fbwb_speed_height(void);
     void setup_turn_angle(void);
@@ -1003,7 +1024,7 @@ private:
     void read_radio();
     int16_t rudder_input(void);
     void control_failsafe();
-    bool trim_radio();
+    void trim_radio();
     bool rc_throttle_value_ok(void) const;
     bool rc_failsafe_active(void) const;
 
@@ -1011,7 +1032,6 @@ private:
     void read_rangefinder(void);
     void read_airspeed(void);
     void rpm_update(void);
-    void accel_cal_update(void);
 
     // system.cpp
     void init_ardupilot() override;
@@ -1050,6 +1070,7 @@ private:
     void dspoiler_update(void);
     void airbrake_update(void);
     void servo_output_mixers(void);
+    void landing_neutral_control_surface_servos(void);
     void servos_output(void);
     void servos_auto_trim(void);
     void servos_twin_engine_mix();
@@ -1082,6 +1103,9 @@ private:
     void update_soaring();
 #endif
 
+    // RC_Channel.cpp
+    bool emergency_landing;
+
     // vehicle specific waypoint info helpers
     bool get_wp_distance_m(float &distance) const override;
     bool get_wp_bearing_deg(float &bearing) const override;
@@ -1092,22 +1116,30 @@ private:
     bool have_reverse_throttle_rc_option;
     bool allow_reverse_thrust(void) const;
     bool have_reverse_thrust(void) const;
-    int16_t get_throttle_input(bool no_deadzone=false) const;
+    float get_throttle_input(bool no_deadzone=false) const;
+    float get_adjusted_throttle_input(bool no_deadzone=false) const;
 
     enum Failsafe_Action {
         Failsafe_Action_None      = 0,
         Failsafe_Action_RTL       = 1,
         Failsafe_Action_Land      = 2,
         Failsafe_Action_Terminate = 3,
+#if HAL_QUADPLANE_ENABLED
         Failsafe_Action_QLand     = 4,
-        Failsafe_Action_Parachute = 5
+#endif
+        Failsafe_Action_Parachute = 5,
+#if HAL_QUADPLANE_ENABLED
+        Failsafe_Action_Loiter_alt_QLand = 6,
+#endif
     };
 
     // list of priorities, highest priority first
     static constexpr int8_t _failsafe_priorities[] = {
                                                       Failsafe_Action_Terminate,
                                                       Failsafe_Action_Parachute,
+#if HAL_QUADPLANE_ENABLED
                                                       Failsafe_Action_QLand,
+#endif
                                                       Failsafe_Action_Land,
                                                       Failsafe_Action_RTL,
                                                       Failsafe_Action_None,

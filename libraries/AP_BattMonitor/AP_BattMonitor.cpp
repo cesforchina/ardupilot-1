@@ -14,6 +14,9 @@
 #include "AP_BattMonitor_FuelLevel_PWM.h"
 #include "AP_BattMonitor_Generator.h"
 #include "AP_BattMonitor_MPPT_PacketDigital.h"
+#include "AP_BattMonitor_INA2xx.h"
+#include "AP_BattMonitor_LTC2946.h"
+#include "AP_BattMonitor_Torqeedo.h"
 
 #include <AP_HAL/AP_HAL.h>
 
@@ -41,134 +44,128 @@ const AP_Param::GroupInfo AP_BattMonitor::var_info[] = {
 
     // @Group: _
     // @Path: AP_BattMonitor_Analog.cpp
-    AP_SUBGROUPVARPTR(drivers[0], "_", 41, AP_BattMonitor, backend_analog_var_info[0]),
+    // @Group: _
+    // @Path: AP_BattMonitor_SMBus.cpp
+    // @Group: _
+    // @Path: AP_BattMonitor_Sum.cpp
+    AP_SUBGROUPVARPTR(drivers[0], "_", 41, AP_BattMonitor, backend_var_info[0]),
 
-    // Monitor 2
-
+#if AP_BATT_MONITOR_MAX_INSTANCES > 1
     // @Group: 2_
     // @Path: AP_BattMonitor_Params.cpp
     AP_SUBGROUPINFO(_params[1], "2_", 24, AP_BattMonitor, AP_BattMonitor_Params),
 
     // @Group: 2_
     // @Path: AP_BattMonitor_Analog.cpp
-    AP_SUBGROUPVARPTR(drivers[1], "2_", 42, AP_BattMonitor, backend_analog_var_info[1]),
+    // @Group: 2_
+    // @Path: AP_BattMonitor_SMBus.cpp
+    // @Group: 2_
+    // @Path: AP_BattMonitor_Sum.cpp
+    AP_SUBGROUPVARPTR(drivers[1], "2_", 42, AP_BattMonitor, backend_var_info[1]),
+#endif
 
-    // Monitor 3
-
+#if AP_BATT_MONITOR_MAX_INSTANCES > 2
     // @Group: 3_
     // @Path: AP_BattMonitor_Params.cpp
     AP_SUBGROUPINFO(_params[2], "3_", 25, AP_BattMonitor, AP_BattMonitor_Params),
 
     // @Group: 3_
     // @Path: AP_BattMonitor_Analog.cpp
-    AP_SUBGROUPVARPTR(drivers[2], "3_", 43, AP_BattMonitor, backend_analog_var_info[2]),
+    // @Group: 3_
+    // @Path: AP_BattMonitor_SMBus.cpp
+    // @Group: 3_
+    // @Path: AP_BattMonitor_Sum.cpp
+    AP_SUBGROUPVARPTR(drivers[2], "3_", 43, AP_BattMonitor, backend_var_info[2]),
+#endif
 
-    // Monitor 4
-
+#if AP_BATT_MONITOR_MAX_INSTANCES > 3
     // @Group: 4_
     // @Path: AP_BattMonitor_Params.cpp
     AP_SUBGROUPINFO(_params[3], "4_", 26, AP_BattMonitor, AP_BattMonitor_Params),
 
     // @Group: 4_
     // @Path: AP_BattMonitor_Analog.cpp
-    AP_SUBGROUPVARPTR(drivers[3], "4_", 44, AP_BattMonitor, backend_analog_var_info[3]),
+    // @Group: 4_
+    // @Path: AP_BattMonitor_SMBus.cpp
+    // @Group: 4_
+    // @Path: AP_BattMonitor_Sum.cpp
+    AP_SUBGROUPVARPTR(drivers[3], "4_", 44, AP_BattMonitor, backend_var_info[3]),
+#endif
 
-    // Monitor 5
-
+#if AP_BATT_MONITOR_MAX_INSTANCES > 4
     // @Group: 5_
     // @Path: AP_BattMonitor_Params.cpp
     AP_SUBGROUPINFO(_params[4], "5_", 27, AP_BattMonitor, AP_BattMonitor_Params),
 
     // @Group: 5_
     // @Path: AP_BattMonitor_Analog.cpp
-    AP_SUBGROUPVARPTR(drivers[4], "5_", 45, AP_BattMonitor, backend_analog_var_info[4]),
+    // @Group: 5_
+    // @Path: AP_BattMonitor_SMBus.cpp
+    // @Group: 5_
+    // @Path: AP_BattMonitor_Sum.cpp
+    AP_SUBGROUPVARPTR(drivers[4], "5_", 45, AP_BattMonitor, backend_var_info[4]),
+#endif
 
-    // Monitor 6
-
+#if AP_BATT_MONITOR_MAX_INSTANCES > 5
     // @Group: 6_
     // @Path: AP_BattMonitor_Params.cpp
     AP_SUBGROUPINFO(_params[5], "6_", 28, AP_BattMonitor, AP_BattMonitor_Params),
 
     // @Group: 6_
     // @Path: AP_BattMonitor_Analog.cpp
-    AP_SUBGROUPVARPTR(drivers[5], "6_", 46, AP_BattMonitor, backend_analog_var_info[5]),
+    // @Group: 6_
+    // @Path: AP_BattMonitor_SMBus.cpp
+    // @Group: 6_
+    // @Path: AP_BattMonitor_Sum.cpp
+    AP_SUBGROUPVARPTR(drivers[5], "6_", 46, AP_BattMonitor, backend_var_info[5]),
+#endif
 
-    // Monitor 7
-
+#if AP_BATT_MONITOR_MAX_INSTANCES > 6
     // @Group: 7_
     // @Path: AP_BattMonitor_Params.cpp
     AP_SUBGROUPINFO(_params[6], "7_", 29, AP_BattMonitor, AP_BattMonitor_Params),
 
     // @Group: 7_
     // @Path: AP_BattMonitor_Analog.cpp
-    AP_SUBGROUPVARPTR(drivers[6], "7_", 47, AP_BattMonitor, backend_analog_var_info[6]),
+    // @Group: 7_
+    // @Path: AP_BattMonitor_SMBus.cpp
+    // @Group: 7_
+    // @Path: AP_BattMonitor_Sum.cpp
+    AP_SUBGROUPVARPTR(drivers[6], "7_", 47, AP_BattMonitor, backend_var_info[6]),
+#endif
 
-    // Monitor 8
-
+#if AP_BATT_MONITOR_MAX_INSTANCES > 7
     // @Group: 8_
     // @Path: AP_BattMonitor_Params.cpp
     AP_SUBGROUPINFO(_params[7], "8_", 30, AP_BattMonitor, AP_BattMonitor_Params),
 
     // @Group: 8_
     // @Path: AP_BattMonitor_Analog.cpp
-    AP_SUBGROUPVARPTR(drivers[7], "8_", 48, AP_BattMonitor, backend_analog_var_info[7]),
+    // @Group: 8_
+    // @Path: AP_BattMonitor_SMBus.cpp
+    // @Group: 8_
+    // @Path: AP_BattMonitor_Sum.cpp
+    AP_SUBGROUPVARPTR(drivers[7], "8_", 48, AP_BattMonitor, backend_var_info[7]),
+#endif
 
-    // Monitor 9
-
+#if AP_BATT_MONITOR_MAX_INSTANCES > 8
     // @Group: 9_
     // @Path: AP_BattMonitor_Params.cpp
     AP_SUBGROUPINFO(_params[8], "9_", 31, AP_BattMonitor, AP_BattMonitor_Params),
 
     // @Group: 9_
     // @Path: AP_BattMonitor_Analog.cpp
-    AP_SUBGROUPVARPTR(drivers[8], "9_", 49, AP_BattMonitor, backend_analog_var_info[8]),
-
-#if HAL_BATTMON_SMBUS_ENABLE
-    // @Group: _
-    // @Path: AP_BattMonitor_SMBus.cpp
-    AP_SUBGROUPVARPTR(drivers[0], "_", 32, AP_BattMonitor, backend_smbus_var_info[0]),
-
-    // @Group: 2_
-    // @Path: AP_BattMonitor_SMBus.cpp
-    AP_SUBGROUPVARPTR(drivers[1], "2_", 33, AP_BattMonitor, backend_smbus_var_info[1]),
-
-    // @Group: 3_
-    // @Path: AP_BattMonitor_SMBus.cpp
-    AP_SUBGROUPVARPTR(drivers[2], "3_", 34, AP_BattMonitor, backend_smbus_var_info[2]),
-
-    // @Group: 4_
-    // @Path: AP_BattMonitor_SMBus.cpp
-    AP_SUBGROUPVARPTR(drivers[3], "4_", 35, AP_BattMonitor, backend_smbus_var_info[3]),
-
-    // @Group: 5_
-    // @Path: AP_BattMonitor_SMBus.cpp
-    AP_SUBGROUPVARPTR(drivers[4], "5_", 36, AP_BattMonitor, backend_smbus_var_info[4]),
-
-    // @Group: 6_
-    // @Path: AP_BattMonitor_SMBus.cpp
-    AP_SUBGROUPVARPTR(drivers[5], "6_", 37, AP_BattMonitor, backend_smbus_var_info[5]),
-
-    // @Group: 7_
-    // @Path: AP_BattMonitor_SMBus.cpp
-    AP_SUBGROUPVARPTR(drivers[6], "7_", 38, AP_BattMonitor, backend_smbus_var_info[6]),
-
-    // @Group: 8_
-    // @Path: AP_BattMonitor_SMBus.cpp
-    AP_SUBGROUPVARPTR(drivers[7], "8_", 39, AP_BattMonitor, backend_smbus_var_info[7]),
-
     // @Group: 9_
     // @Path: AP_BattMonitor_SMBus.cpp
-    AP_SUBGROUPVARPTR(drivers[8], "9_", 40, AP_BattMonitor, backend_smbus_var_info[8]),
-#endif // HAL_BATTMON_SMBUS_ENABLE
+    // @Group: 9_
+    // @Path: AP_BattMonitor_Sum.cpp
+    AP_SUBGROUPVARPTR(drivers[8], "9_", 49, AP_BattMonitor, backend_var_info[8]),
+#endif
 
     AP_GROUPEND
 };
 
-const AP_Param::GroupInfo *AP_BattMonitor::backend_analog_var_info[AP_BATT_MONITOR_MAX_INSTANCES];
-
-#if HAL_BATTMON_SMBUS_ENABLE
-const AP_Param::GroupInfo *AP_BattMonitor::backend_smbus_var_info[AP_BATT_MONITOR_MAX_INSTANCES];
-#endif
+const AP_Param::GroupInfo *AP_BattMonitor::backend_var_info[AP_BATT_MONITOR_MAX_INSTANCES];
 
 // Default constructor.
 // Note that the Vector/Matrix constructors already implicitly zero
@@ -266,19 +263,34 @@ AP_BattMonitor::init()
                 drivers[instance] = new AP_BattMonitor_FuelLevel_PWM(*this, state[instance], _params[instance]);
                 break;
 #endif // HAL_BATTMON_FUEL_ENABLE
-#if GENERATOR_ENABLED
+#if HAL_GENERATOR_ENABLED
             case Type::GENERATOR_ELEC:
                 drivers[instance] = new AP_BattMonitor_Generator_Elec(*this, state[instance], _params[instance]);
                 break;
             case Type::GENERATOR_FUEL:
                 drivers[instance] = new AP_BattMonitor_Generator_FuelLevel(*this, state[instance], _params[instance]);
                 break;
-#endif // GENERATOR_ENABLED
+#endif // HAL_GENERATOR_ENABLED
 #if HAL_MPPT_PACKETDIGITAL_CAN_ENABLE
             case Type::MPPT_PacketDigital:
                 drivers[instance] = new AP_BattMonitor_MPPT_PacketDigital(*this, state[instance], _params[instance]);
                 break;
 #endif // HAL_MPPT_PACKETDIGITAL_CAN_ENABLE
+#if HAL_BATTMON_INA2XX_ENABLED
+            case Type::INA2XX:
+                drivers[instance] = new AP_BattMonitor_INA2XX(*this, state[instance], _params[instance]);
+                break;
+#endif
+#if HAL_BATTMON_LTC2946_ENABLED
+            case Type::LTC2946:
+                drivers[instance] = new AP_BattMonitor_LTC2946(*this, state[instance], _params[instance]);
+                break;
+#endif
+#if HAL_TORQEEDO_ENABLED
+            case Type::Torqeedo:
+                drivers[instance] = new AP_BattMonitor_Torqeedo(*this, state[instance], _params[instance]);
+                break;
+#endif
             case Type::NONE:
             default:
                 break;
@@ -286,19 +298,9 @@ AP_BattMonitor::init()
 
     // if the backend has some local parameters then make those available in the tree
     if (drivers[instance] && state[instance].var_info) {
-        Type type = get_type(instance);
-        if((type == Type::ANALOG_VOLTAGE_AND_CURRENT) || (type == Type::ANALOG_VOLTAGE_ONLY) ||
-            (type == Type::FuelFlow) || (type == Type::FuelLevel_PWM)) {
-            backend_analog_var_info[instance] = state[instance].var_info;
-            AP_Param::load_object_from_eeprom(drivers[instance], backend_analog_var_info[instance]);
-        }
-#if HAL_BATTMON_SMBUS_ENABLE
-        else if ((type == Type::MAXELL) || (type == Type::NeoDesign) || (type == Type::Rotoye) || (type == Type::SMBus_Generic) ||
-            (type == Type::SOLO)   || (type == Type::SUI3)      || (type == Type::SUI6)) {
-            backend_smbus_var_info[instance] = state[instance].var_info;
-            AP_Param::load_object_from_eeprom(drivers[instance], backend_smbus_var_info[instance]);
-        }
-#endif
+        backend_var_info[instance] = state[instance].var_info;
+        AP_Param::load_object_from_eeprom(drivers[instance], backend_var_info[instance]);
+
         // param count could have changed
         AP_Param::invalidate_count();
     }
@@ -415,7 +417,7 @@ void AP_BattMonitor::convert_params(void) {
 
 #if APM_BUILD_TYPE(APM_BUILD_ArduPlane)
     info.old_key = 166;
-#elif APM_BUILD_TYPE(APM_BUILD_ArduCopter)
+#elif APM_BUILD_COPTER_OR_HELI
     info.old_key = 36;
 #elif APM_BUILD_TYPE(APM_BUILD_ArduSub)
     info.old_key = 33;
@@ -531,14 +533,23 @@ bool AP_BattMonitor::consumed_wh(float &wh, const uint8_t instance) const {
     }
 }
 
-/// capacity_remaining_pct - returns the % battery capacity remaining (0 ~ 100)
-uint8_t AP_BattMonitor::capacity_remaining_pct(uint8_t instance) const
+/// capacity_remaining_pct - returns true if the percentage is valid and writes to percentage argument
+bool AP_BattMonitor::capacity_remaining_pct(uint8_t &percentage, uint8_t instance) const
 {
     if (instance < _num_instances && drivers[instance] != nullptr) {
-        return drivers[instance]->capacity_remaining_pct();
-    } else {
-        return 0;
+        return drivers[instance]->capacity_remaining_pct(percentage);
     }
+    return false;
+}
+
+/// time_remaining - returns remaining battery time
+bool AP_BattMonitor::time_remaining(uint32_t &seconds, uint8_t instance) const
+{
+    if (instance < _num_instances && drivers[instance] != nullptr && state[instance].has_time_remaining) {
+        seconds = state[instance].time_remaining;
+        return true;
+    }
+    return false;
 }
 
 /// pack_capacity_mah - returns the capacity of the battery pack in mAh when the pack is full
@@ -697,7 +708,7 @@ void AP_BattMonitor::checkPoweringOff(void)
 #endif
 
             // Send a Mavlink broadcast announcing the shutdown
-#ifndef HAL_NO_GCS
+#if HAL_GCS_ENABLED
             mavlink_command_long_t cmd_msg{};
             cmd_msg.command = MAV_CMD_POWER_OFF_INITIATED;
             cmd_msg.param1 = i+1;

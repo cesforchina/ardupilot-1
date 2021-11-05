@@ -345,7 +345,7 @@ const AP_Param::GroupInfo AP_SerialManager::var_info[] = {
 
     // @Param: 8_BAUD
     // @DisplayName: Serial 8 Baud Rate
-    // @Description: The baud rate used for Serial7. Most stm32-based boards can support rates of up to 1500. If you setup a rate you cannot support and then can't connect to your board you should load a firmware from a different vehicle type. That will reset all your parameters to defaults.
+    // @Description: The baud rate used for Serial8. Most stm32-based boards can support rates of up to 1500. If you setup a rate you cannot support and then can't connect to your board you should load a firmware from a different vehicle type. That will reset all your parameters to defaults.
     // @Values: 1:1200,2:2400,4:4800,9:9600,19:19200,38:38400,57:57600,111:111100,115:115200,230:230400,256:256000,460:460800,500:500000,921:921600,1500:1500000
     // @User: Standard
     AP_GROUPINFO("8_BAUD", 27, AP_SerialManager, state[8].baud, SERIAL8_BAUD),
@@ -414,12 +414,7 @@ void AP_SerialManager::init()
         auto *uart = hal.serial(i);
 
         if (uart != nullptr) {
-
-            // see if special options have been requested
-            if (state[i].protocol != SerialProtocol_None && state[i].options) {
-                set_options(i);
-            }
-
+            set_options(i);
             switch (state[i].protocol) {
                 case SerialProtocol_None:
                     break;
@@ -461,7 +456,7 @@ void AP_SerialManager::init()
                                          AP_SERIALMANAGER_SToRM32_BUFSIZE_RX,
                                          AP_SERIALMANAGER_SToRM32_BUFSIZE_TX);
                     break;
-                case SerialProtocol_Aerotenna_uLanding:
+                case SerialProtocol_Aerotenna_USD1:
                     state[i].protocol.set_and_save(SerialProtocol_Rangefinder);
                     break;
                 case SerialProtocol_Volz:
@@ -486,7 +481,7 @@ void AP_SerialManager::init()
 
                 case SerialProtocol_ESCTelemetry:
                     // ESC telemetry protocol from BLHeli32 ESCs. Note that baudrate is hardcoded to 115200
-                    state[i].baud = 115200;
+                    state[i].baud = 115200 / 1000;
                     uart->begin(map_baudrate(state[i].baud), 30, 30);
                     uart->set_flow_control(AP_HAL::UARTDriver::FLOW_CONTROL_DISABLE);
                     break;

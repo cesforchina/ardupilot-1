@@ -1221,7 +1221,7 @@ const struct AP_Logger::log_write_fmt *AP_Logger::log_write_fmt_for_msg_type(con
 // returns true if the msg_type is already taken
 bool AP_Logger::msg_type_in_use(const uint8_t msg_type) const
 {
-    // check static list of messages (e.g. from LOG_BASE_STRUCTURES)
+    // check static list of messages (e.g. from LOG_COMMON_STRUCTURES)
     // check the write format types to see if we've used this one
     for (uint16_t i=0; i<_num_types;i++) {
         if (structure(i)->msg_type == msg_type) {
@@ -1340,6 +1340,7 @@ int16_t AP_Logger::Write_calc_msg_len(const char *fmt) const
 void AP_Logger::io_thread(void)
 {
     uint32_t last_run_us = AP_HAL::micros();
+    uint8_t counter = 0;
 
     while (true) {
         uint32_t now = AP_HAL::micros();
@@ -1353,6 +1354,15 @@ void AP_Logger::io_thread(void)
         last_run_us = AP_HAL::micros();
 
         FOR_EACH_BACKEND(io_timer());
+
+        if (++counter % 4 == 0) {
+            hal.util->log_stack_info();
+        }
+#if HAL_LOGGER_FILE_CONTENTS_ENABLED
+        if (counter % 100 == 0) {
+            file_content_update();
+        }
+#endif
     }
 }
 
@@ -1415,6 +1425,10 @@ bool AP_Logger::log_while_disarmed(void) const
 
     uint32_t now = AP_HAL::millis();
     uint32_t persist_ms = HAL_LOGGER_ARM_PERSIST*1000U;
+    if (_force_long_log_persist) {
+        // log for 10x longer than default
+        persist_ms *= 10U;
+    }
 
     // keep logging for HAL_LOGGER_ARM_PERSIST seconds after disarming
     const uint32_t arm_change_ms = hal.util->get_last_armed_change();
@@ -1429,6 +1443,80 @@ bool AP_Logger::log_while_disarmed(void) const
 
     return false;
 }
+
+#if HAL_LOGGER_FILE_CONTENTS_ENABLED
+/*
+  log the content of a file in FILE log messages
+ */
+void AP_Logger::log_file_content(const char *filename)
+{
+    WITH_SEMAPHORE(file_content.sem);
+    auto *file = new file_list;
+    if (file == nullptr) {
+        return;
+    }
+    file->filename = filename;
+    if (file_content.head == nullptr) {
+        file_content.tail = file_content.head = file;
+        file_content.fd = -1;
+    } else {
+        file_content.tail->next = file;
+        file_content.tail = file;
+    }
+}
+
+/*
+  periodic call to log file content
+ */
+void AP_Logger::file_content_update(void)
+{
+    auto *file = file_content.head;
+    if (file == nullptr) {
+        return;
+    }
+
+    // remove a file structure from the linked list
+    auto remove_from_list = [this,file]()
+    { 
+        WITH_SEMAPHORE(file_content.sem);
+        file_content.head = file->next;
+        if (file_content.tail == file) {
+            file_content.tail = file_content.head;
+        }
+        delete file;
+        file_content.fd = -1;
+    };
+
+    if (file_content.fd == -1) {
+        // open a new file
+        file_content.fd  = AP::FS().open(file->filename, O_RDONLY);
+        if (file_content.fd == -1) {
+            remove_from_list();
+            return;
+        }
+        file_content.offset = 0;
+    }
+
+    struct log_File pkt {
+        LOG_PACKET_HEADER_INIT(LOG_FILE_MSG),
+    };
+    strncpy_noterm(pkt.filename, file->filename, sizeof(pkt.filename));
+    const auto length = AP::FS().read(file_content.fd, pkt.data, sizeof(pkt.data));
+    if (length <= 0) {
+        AP::FS().close(file_content.fd);
+        remove_from_list();
+        return;
+    }
+    pkt.offset = file_content.offset;
+    pkt.length = length;
+    if (WriteBlock_first_succeed(&pkt, sizeof(pkt))) {
+        file_content.offset += length;
+    } else {
+        // seek back ready for another try
+        AP::FS().lseek(file_content.fd, file_content.offset, SEEK_SET);
+    }
+}
+#endif // HAL_LOGGER_FILE_CONTENTS_ENABLED
 
 namespace AP {
 

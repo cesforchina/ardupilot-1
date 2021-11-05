@@ -314,8 +314,8 @@ AC_PosControl::AC_PosControl(AP_AHRS_View& ahrs, const AP_InertialNav& inav,
     _vel_max_xy_cms(POSCONTROL_SPEED),
     _accel_max_z_cmss(POSCONTROL_ACCEL_Z),
     _accel_max_xy_cmss(POSCONTROL_ACCEL_XY),
-    _jerk_xy_max(POSCONTROL_JERK_XY),
-    _jerk_z_max(POSCONTROL_JERK_Z)
+    _jerk_max_xy_cmsss(POSCONTROL_JERK_XY * 100.0),
+    _jerk_max_z_cmsss(POSCONTROL_JERK_Z * 100.0)
 {
     AP_Param::setup_object_defaults(this, var_info);
 
@@ -379,14 +379,14 @@ void AC_PosControl::input_pos_xyz(const Vector3p& pos, float pos_offset_z, float
     Vector2f vel;
     Vector2f accel;
     shape_pos_vel_accel_xy(pos.xy(), vel, accel, _pos_target.xy(), _vel_desired.xy(), _accel_desired.xy(),
-                           vel_max_xy_cms, _accel_max_xy_cmss, _jerk_xy_max, _dt, false);
+                           vel_max_xy_cms, _accel_max_xy_cmss, _jerk_max_xy_cmsss, _dt, false);
 
     float posz = pos.z;
     shape_pos_vel_accel(posz, 0, 0,
                         _pos_target.z, _vel_desired.z, _accel_desired.z,
                         -vel_max_z_cms, vel_max_z_cms,
                         -constrain_float(accel_z_cmss, 0.0f, 750.0f), accel_z_cmss,
-                        _jerk_z_max, _dt, false);
+                        _jerk_max_z_cmsss, _dt, false);
 
     // update the vertical position, velocity and acceleration offsets
     update_pos_offset_z(pos_offset_z);
@@ -419,10 +419,6 @@ float AC_PosControl::pos_offset_z_scaler(float pos_offset_z, float pos_offset_z_
 ///     by the kinematic shaping.
 void AC_PosControl::set_max_speed_accel_xy(float speed_cms, float accel_cmss)
 {
-    // return immediately if no change
-    if ((is_equal(_vel_max_xy_cms, speed_cms) && is_equal(_accel_max_xy_cmss, accel_cmss))) {
-        return;
-    }
     _vel_max_xy_cms = speed_cms;
     _accel_max_xy_cmss = accel_cmss;
 
@@ -431,16 +427,16 @@ void AC_PosControl::set_max_speed_accel_xy(float speed_cms, float accel_cmss)
     const float snap_max_cmssss = MIN(_attitude_control.get_accel_roll_max_radss(), _attitude_control.get_accel_pitch_max_radss()) * GRAVITY_MSS * 100.0;
 
     // get specified jerk limit
-    _jerk_xy_max = _shaping_jerk_xy * 100.0;
+    _jerk_max_xy_cmsss = _shaping_jerk_xy * 100.0;
 
     // limit maximum jerk based on maximum angular rate
     if (is_positive(jerk_max_cmsss) && _attitude_control.get_bf_feedforward()) {
-        _jerk_xy_max = MIN(_jerk_xy_max, jerk_max_cmsss);
+        _jerk_max_xy_cmsss = MIN(_jerk_max_xy_cmsss, jerk_max_cmsss);
     }
 
     // limit maximum jerk to maximum possible average jerk based on angular acceleration
     if (is_positive(snap_max_cmssss) && _attitude_control.get_bf_feedforward()) {
-        _jerk_xy_max = MIN(0.5 * safe_sqrt(_accel_max_xy_cmss * snap_max_cmssss), _jerk_xy_max);
+        _jerk_max_xy_cmsss = MIN(0.5 * safe_sqrt(_accel_max_xy_cmss * snap_max_cmssss), _jerk_max_xy_cmsss);
     }
 }
 
@@ -537,7 +533,7 @@ void AC_PosControl::input_accel_xy(const Vector3f& accel)
     handle_ekf_xy_reset();
 
     update_pos_vel_accel_xy(_pos_target.xy(), _vel_desired.xy(), _accel_desired.xy(), _dt, _limit_vector.xy());
-    shape_accel_xy(accel, _accel_desired, _jerk_xy_max, _dt);
+    shape_accel_xy(accel, _accel_desired, _jerk_max_xy_cmsss, _dt);
 }
 
 /// input_vel_accel_xy - calculate a jerk limited path from the current position, velocity and acceleration to an input velocity and acceleration.
@@ -550,7 +546,7 @@ void AC_PosControl::input_vel_accel_xy(Vector2f& vel, const Vector2f& accel, boo
     update_pos_vel_accel_xy(_pos_target.xy(), _vel_desired.xy(), _accel_desired.xy(), _dt, _limit_vector.xy());
 
     shape_vel_accel_xy(vel, accel, _vel_desired.xy(), _accel_desired.xy(),
-        _accel_max_xy_cmss, _jerk_xy_max, _dt, limit_output);
+        _accel_max_xy_cmss, _jerk_max_xy_cmsss, _dt, limit_output);
 
     update_vel_accel_xy(vel, accel, _dt, Vector2f());
 }
@@ -565,7 +561,7 @@ void AC_PosControl::input_pos_vel_accel_xy(Vector2p& pos, Vector2f& vel, const V
     update_pos_vel_accel_xy(_pos_target.xy(), _vel_desired.xy(), _accel_desired.xy(), _dt, _limit_vector.xy());
 
     shape_pos_vel_accel_xy(pos, vel, accel, _pos_target.xy(), _vel_desired.xy(), _accel_desired.xy(),
-                           _vel_max_xy_cms, _accel_max_xy_cmss, _jerk_xy_max, _dt, limit_output);
+                           _vel_max_xy_cms, _accel_max_xy_cmss, _jerk_max_xy_cmsss, _dt, limit_output);
 
     update_pos_vel_accel_xy(pos, vel, accel, _dt, Vector2f());
 }
@@ -654,7 +650,7 @@ void AC_PosControl::update_xy_controller()
 
     // limit acceleration using maximum lean angles
     _limit_vector.xy().zero();
-    float angle_max = MIN(_attitude_control.get_althold_lean_angle_max(), get_lean_angle_max_cd());
+    float angle_max = MIN(_attitude_control.get_althold_lean_angle_max_cd(), get_lean_angle_max_cd());
     float accel_max = GRAVITY_MSS * 100.0f * tanf(ToRad(angle_max * 0.01f));
     if (_accel_target.limit_length_xy(accel_max)) {
         _limit_vector.xy() = _accel_target.xy();
@@ -680,11 +676,6 @@ void AC_PosControl::set_max_speed_accel_z(float speed_down, float speed_up, floa
     // ensure speed_down is always negative
     speed_down = -fabsf(speed_down);
 
-    // exit immediately if no change in speed up or down
-    if (is_equal(_vel_max_down_cms, speed_down) && is_equal(_vel_max_up_cms, speed_up) && is_equal(_accel_max_z_cmss, accel_cmss)) {
-        return;
-    }
-
     // sanity check and update
     if (is_negative(speed_down)) {
         _vel_max_down_cms = speed_down;
@@ -697,12 +688,12 @@ void AC_PosControl::set_max_speed_accel_z(float speed_down, float speed_up, floa
     }
 
     // ensure the vertical Jerk is not limited by the filters in the Z accel PID object
-    _jerk_z_max = _shaping_jerk_z * 100.0;
+    _jerk_max_z_cmsss = _shaping_jerk_z * 100.0;
     if (is_positive(_pid_accel_z.filt_T_hz())) {
-        _jerk_z_max = MIN(_jerk_z_max, MIN(GRAVITY_MSS * 100.0, _accel_max_z_cmss) * (M_2PI * _pid_accel_z.filt_T_hz()) / 5.0);
+        _jerk_max_z_cmsss = MIN(_jerk_max_z_cmsss, MIN(GRAVITY_MSS * 100.0, _accel_max_z_cmss) * (M_2PI * _pid_accel_z.filt_T_hz()) / 5.0);
     }
     if (is_positive(_pid_accel_z.filt_E_hz())) {
-        _jerk_z_max = MIN(_jerk_z_max, MIN(GRAVITY_MSS * 100.0, _accel_max_z_cmss) * (M_2PI * _pid_accel_z.filt_E_hz()) / 5.0);
+        _jerk_max_z_cmsss = MIN(_jerk_max_z_cmsss, MIN(GRAVITY_MSS * 100.0, _accel_max_z_cmss) * (M_2PI * _pid_accel_z.filt_E_hz()) / 5.0);
     }
 }
 
@@ -712,7 +703,7 @@ void AC_PosControl::set_max_speed_accel_z(float speed_down, float speed_up, floa
 void AC_PosControl::set_correction_speed_accel_z(float speed_down, float speed_up, float accel_cmss)
 {
     // define maximum position error and maximum first and second differential limits
-    _p_pos_z.set_limits(-fabsf(speed_down), _vel_max_up_cms, _accel_max_z_cmss, 0.0f);
+    _p_pos_z.set_limits(-fabsf(speed_down), speed_up, accel_cmss, 0.0f);
 }
 
 /// init_z_controller - initialise the position controller to the current position, velocity, acceleration and attitude.
@@ -790,6 +781,7 @@ void AC_PosControl::init_z()
     _pid_accel_z.reset_filter();
 
     // initialise vertical offsets
+    _pos_offset_target_z = 0.0;
     _pos_offset_z = 0.0;
     _vel_offset_z = 0.0;
     _accel_offset_z = 0.0;
@@ -805,7 +797,7 @@ void AC_PosControl::init_z()
 ///     The vel is projected forwards in time based on a time step of dt and acceleration accel.
 ///     The function takes the current position, velocity, and acceleration and calculates the required jerk limited adjustment to the acceleration for the next time dt.
 ///     The function alters the vel to be the kinematic path based on accel
-void AC_PosControl::input_accel_z(const float accel)
+void AC_PosControl::input_accel_z(float accel)
 {
     // calculated increased maximum acceleration if over speed
     float accel_z_cmss = _accel_max_z_cmss;
@@ -819,14 +811,14 @@ void AC_PosControl::input_accel_z(const float accel)
     // adjust desired alt if motors have not hit their limits
     update_pos_vel_accel(_pos_target.z, _vel_desired.z, _accel_desired.z, _dt, _limit_vector.z);
 
-    shape_accel(accel, _accel_desired.z, _jerk_z_max, _dt);
+    shape_accel(accel, _accel_desired.z, _jerk_max_z_cmsss, _dt);
 }
 
 /// input_accel_z - calculate a jerk limited path from the current position, velocity and acceleration to an input acceleration.
 ///     The function takes the current position, velocity, and acceleration and calculates the required jerk limited adjustment to the acceleration for the next time dt.
 ///     The kinematic path is constrained by the maximum acceleration and jerk set using the function set_max_speed_accel_z.
 ///     The parameter limit_output specifies if the velocity and acceleration limits are applied to the sum of commanded and correction values or just correction.
-void AC_PosControl::input_vel_accel_z(float &vel, const float accel, bool ignore_descent_limit, bool limit_output)
+void AC_PosControl::input_vel_accel_z(float &vel, float accel, bool ignore_descent_limit, bool limit_output)
 {
     if (ignore_descent_limit) {
         // turn off limits in the negative z direction
@@ -848,18 +840,39 @@ void AC_PosControl::input_vel_accel_z(float &vel, const float accel, bool ignore
     shape_vel_accel(vel, accel,
                     _vel_desired.z, _accel_desired.z,
                     -constrain_float(accel_z_cmss, 0.0f, 750.0f), accel_z_cmss,
-                    _jerk_z_max, _dt, limit_output);
+                    _jerk_max_z_cmsss, _dt, limit_output);
 
     update_vel_accel(vel, accel, _dt, 0);
 }
 
 /// set_pos_target_z_from_climb_rate_cm - adjusts target up or down using a commanded climb rate in cm/s
 ///     using the default position control kinematic path.
-///     ignore_descent_limit turns off output saturation handling to aid in landing detection. ignore_descent_limit should be true unless landing.
-void AC_PosControl::set_pos_target_z_from_climb_rate_cm(const float vel, bool ignore_descent_limit)
+///     The zero target altitude is varied to follow pos_offset_z
+void AC_PosControl::set_pos_target_z_from_climb_rate_cm(float vel)
 {
-    float vel2 = vel;
-    input_vel_accel_z(vel2, 0, ignore_descent_limit);
+    // remove terrain offsets for flat earth assumption
+    _pos_target.z -= _pos_offset_z;
+    _vel_desired.z -= _vel_offset_z;
+    _accel_desired.z -= _accel_offset_z;
+
+    float vel_temp = vel;
+    input_vel_accel_z(vel_temp, 0, false);
+
+    // update the vertical position, velocity and acceleration offsets
+    update_pos_offset_z(_pos_offset_target_z);
+
+    // add terrain offsets
+    _pos_target.z += _pos_offset_z;
+    _vel_desired.z += _vel_offset_z;
+    _accel_desired.z += _accel_offset_z;
+}
+
+/// land_at_climb_rate_cm - adjusts target up or down using a commanded climb rate in cm/s
+///     using the default position control kinematic path.
+///     ignore_descent_limit turns off output saturation handling to aid in landing detection. ignore_descent_limit should be true unless landing.
+void AC_PosControl::land_at_climb_rate_cm(float vel, bool ignore_descent_limit)
+{
+    input_vel_accel_z(vel, 0, ignore_descent_limit);
 }
 
 /// input_pos_vel_accel_z - calculate a jerk limited path from the current position, velocity and acceleration to an input position velocity and acceleration.
@@ -867,7 +880,7 @@ void AC_PosControl::set_pos_target_z_from_climb_rate_cm(const float vel, bool ig
 ///     The function takes the current position, velocity, and acceleration and calculates the required jerk limited adjustment to the acceleration for the next time dt.
 ///     The function alters the pos and vel to be the kinematic path based on accel
 ///     The parameter limit_output specifies if the velocity and acceleration limits are applied to the sum of commanded and correction values or just correction.
-void AC_PosControl::input_pos_vel_accel_z(float &pos, float &vel, const float accel, bool limit_output)
+void AC_PosControl::input_pos_vel_accel_z(float &pos, float &vel, float accel, bool limit_output)
 {
     // calculated increased maximum acceleration if over speed
     float accel_z_cmss = _accel_max_z_cmss;
@@ -885,7 +898,7 @@ void AC_PosControl::input_pos_vel_accel_z(float &pos, float &vel, const float ac
                         _pos_target.z, _vel_desired.z, _accel_desired.z,
                         _vel_max_down_cms, _vel_max_up_cms,
                         -constrain_float(accel_z_cmss, 0.0f, 750.0f), accel_z_cmss,
-                        _jerk_z_max, _dt, limit_output);
+                        _jerk_max_z_cmsss, _dt, limit_output);
 
     postype_t posp = pos;
     update_pos_vel_accel(posp, vel, accel, _dt, 0);
@@ -894,11 +907,10 @@ void AC_PosControl::input_pos_vel_accel_z(float &pos, float &vel, const float ac
 
 /// set_alt_target_with_slew - adjusts target up or down using a commanded altitude in cm
 ///     using the default position control kinematic path.
-void AC_PosControl::set_alt_target_with_slew(const float& pos)
+void AC_PosControl::set_alt_target_with_slew(float pos)
 {
-    float posf = pos;
     float zero = 0;
-    input_pos_vel_accel_z(posf, zero, 0);
+    input_pos_vel_accel_z(pos, zero, 0);
 }
 
 /// update_pos_offset_z - updates the vertical offsets used by terrain following
@@ -914,7 +926,7 @@ void AC_PosControl::update_pos_offset_z(float pos_offset_z)
         _pos_offset_z, _vel_offset_z, _accel_offset_z,
         get_max_speed_down_cms(), get_max_speed_up_cms(),
         -get_max_accel_z_cmss(), get_max_accel_z_cmss(),
-        _jerk_z_max, _dt, false);
+        _jerk_max_z_cmsss, _dt, false);
 }
 
 // is_active_z - returns true if the z position controller has been run in the previous 5 loop times
@@ -1011,8 +1023,8 @@ void AC_PosControl::update_z_controller()
 /// get_lean_angle_max_cd - returns the maximum lean angle the autopilot may request
 float AC_PosControl::get_lean_angle_max_cd() const
 {
-    if (is_zero(_lean_angle_max)) {
-        return _attitude_control.lean_angle_max();
+    if (!is_positive(_lean_angle_max)) {
+        return _attitude_control.lean_angle_max_cd();
     }
     return _lean_angle_max * 100.0f;
 }
@@ -1149,13 +1161,18 @@ void AC_PosControl::write_log()
     if (is_active_xy()) {
         float accel_x, accel_y;
         lean_angles_to_accel_xy(accel_x, accel_y);
-        AP::logger().Write_PSC(get_pos_target_cm().tofloat(), _inav.get_position(), get_vel_target_cms(), _inav.get_velocity(), get_accel_target_cmss(), accel_x, accel_y);
+        AP::logger().Write_PSCN(get_pos_target_cm().x, _inav.get_position().x,
+                                get_vel_desired_cms().x, get_vel_target_cms().x, _inav.get_velocity().x,
+                                _accel_desired.x, get_accel_target_cmss().x, accel_x);
+        AP::logger().Write_PSCE(get_pos_target_cm().y, _inav.get_position().y,
+                                get_vel_desired_cms().y, get_vel_target_cms().y, _inav.get_velocity().y,
+                                _accel_desired.y, get_accel_target_cmss().y, accel_y);
     }
 
     if (is_active_z()) {
-        AP::logger().Write_PSCZ(get_pos_target_cm().z, _inav.get_position().z,
-                                get_vel_desired_cms().z, get_vel_target_cms().z, _inav.get_velocity().z,
-                                _accel_desired.z, get_accel_target_cmss().z, get_z_accel_cmss(), _attitude_control.get_throttle_in());
+        AP::logger().Write_PSCD(-get_pos_target_cm().z, -_inav.get_position().z,
+                                -get_vel_desired_cms().z, -get_vel_target_cms().z, -_inav.get_velocity().z,
+                                -_accel_desired.z, -get_accel_target_cmss().z, -get_z_accel_cmss());
     }
 }
 

@@ -39,7 +39,9 @@
 
 #include "UARTDriver.h"
 #include "SITL_State.h"
+#if HAL_GCS_ENABLED
 #include <AP_HAL/utility/packetise.h>
+#endif
 
 extern const AP_HAL::HAL& hal;
 
@@ -64,11 +66,13 @@ void UARTDriver::begin(uint32_t baud, uint16_t rxSpace, uint16_t txSpace)
     if (strcmp(path, "GPS1") == 0) {
         /* gps */
         _connected = true;
-        _fd = _sitlState->gps_pipe(0);
+        _fd = _sitlState->sim_fd("gps:1", "");
+        _fd_write = _sitlState->sim_fd_write("gps:1");
     } else if (strcmp(path, "GPS2") == 0) {
         /* 2nd gps */
         _connected = true;
-        _fd = _sitlState->gps_pipe(1);
+        _fd = _sitlState->sim_fd("gps:2", "");
+        _fd_write = _sitlState->sim_fd_write("gps:2");
     } else {
         /* parse type:args:flags string for path. 
            For example:
@@ -474,7 +478,9 @@ void UARTDriver::_udp_start_client(const char *address, uint16_t port)
     }
 
     _is_udp = true;
+#if HAL_GCS_ENABLED
     _packetise = true;
+#endif
     _connected = true;
 }
 
@@ -698,9 +704,11 @@ void UARTDriver::_timer_tick(void)
     if (_packetise) {
         uint16_t n = _writebuffer.available();
         n = MIN(n, max_bytes);
+#if HAL_GCS_ENABLED
         if (n > 0) {
             n = mavlink_packetise(_writebuffer, n);
         }
+#endif
         if (n > 0) {
             // keep as a single UDP packet
             uint8_t tmpbuf[n];

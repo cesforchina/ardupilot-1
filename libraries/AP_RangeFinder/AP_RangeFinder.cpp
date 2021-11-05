@@ -28,7 +28,7 @@
 #endif
 #include "AP_RangeFinder_MAVLink.h"
 #include "AP_RangeFinder_LeddarOne.h"
-#include "AP_RangeFinder_uLanding.h"
+#include "AP_RangeFinder_USD1_Serial.h"
 #include "AP_RangeFinder_TeraRangerI2C.h"
 #include "AP_RangeFinder_VL53L0X.h"
 #include "AP_RangeFinder_VL53L1X.h"
@@ -225,7 +225,7 @@ void RangeFinder::convert_params(void) {
 
 #if APM_BUILD_TYPE(APM_BUILD_ArduPlane)
     info.old_key = 71;
-#elif APM_BUILD_TYPE(APM_BUILD_ArduCopter)
+#elif APM_BUILD_COPTER_OR_HELI
     info.old_key = 53;
 #elif APM_BUILD_TYPE(APM_BUILD_ArduSub)
     info.old_key = 35;
@@ -450,9 +450,9 @@ void RangeFinder::detect_instance(uint8_t instance, uint8_t& serial_instance)
             _add_backend(new AP_RangeFinder_LeddarOne(state[instance], params[instance]), instance, serial_instance++);
         }
         break;
-    case Type::ULANDING:
-        if (AP_RangeFinder_uLanding::detect(serial_instance)) {
-            _add_backend(new AP_RangeFinder_uLanding(state[instance], params[instance]), instance, serial_instance++);
+    case Type::USD1_Serial:
+        if (AP_RangeFinder_USD1_Serial::detect(serial_instance)) {
+            _add_backend(new AP_RangeFinder_USD1_Serial(state[instance], params[instance]), instance, serial_instance++);
         }
         break;
     case Type::BEBOP:
@@ -661,6 +661,15 @@ AP_RangeFinder_Backend *RangeFinder::find_instance(enum Rotation orientation) co
         }
     }
     return nullptr;
+}
+
+float RangeFinder::distance_orient(enum Rotation orientation) const
+{
+    AP_RangeFinder_Backend *backend = find_instance(orientation);
+    if (backend == nullptr) {
+        return 0;
+    }
+    return backend->distance();
 }
 
 uint16_t RangeFinder::distance_cm_orient(enum Rotation orientation) const
