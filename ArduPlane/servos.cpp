@@ -32,6 +32,7 @@ void Plane::throttle_slew_limit(SRV_Channel::Aux_servo_function_t func)
 
     if (!do_throttle_slew) {
         // only do throttle slew limiting in modes where throttle control is automatic
+        SRV_Channels::set_slew_rate(func, 0.0, 100, G_Dt);
         return;
     }
 
@@ -54,10 +55,7 @@ void Plane::throttle_slew_limit(SRV_Channel::Aux_servo_function_t func)
         slewrate = g.takeoff_throttle_slewrate;
     }
 #endif
-    // if slew limit rate is set to zero then do not slew limit
-    if (slewrate) {                   
-        SRV_Channels::limit_slew_rate(func, slewrate, G_Dt);
-    }
+    SRV_Channels::set_slew_rate(func, slewrate, 100, G_Dt);
 }
 
 /* We want to suppress the throttle if we think we are on the ground and in an autopilot controlled throttle mode.
@@ -135,11 +133,17 @@ bool Plane::suppress_throttle(void)
         // if we have an airspeed sensor, then check it too, and
         // require 5m/s. This prevents throttle up due to spiky GPS
         // groundspeed with bad GPS reception
+#if AP_AIRSPEED_ENABLED
         if ((!ahrs.airspeed_sensor_enabled()) || airspeed.get_airspeed() >= 5) {
             // we're moving at more than 5 m/s
             throttle_suppressed = false;
             return false;        
         }
+#else
+        // no airspeed sensor, so we trust that the GPS's movement is truthful
+        throttle_suppressed = false;
+        return false;
+#endif
     }
 
 #if HAL_QUADPLANE_ENABLED
@@ -186,7 +190,7 @@ void Plane::channel_function_mixer(SRV_Channel::Aux_servo_function_t func1_in, S
 /*
   setup flaperon output channels
  */
-void Plane::flaperon_update(int8_t flap_percent)
+void Plane::flaperon_update()
 {
     /*
       flaperons are implemented as a mixer between aileron and a
@@ -194,6 +198,7 @@ void Plane::flaperon_update(int8_t flap_percent)
       or from auto flaps.
      */
     float aileron = SRV_Channels::get_output_scaled(SRV_Channel::k_aileron);
+    float flap_percent = SRV_Channels::get_slew_limited_output_scaled(SRV_Channel::k_flap_auto);
     float flaperon_left  = constrain_float(aileron + flap_percent * 45, -4500, 4500);
     float flaperon_right = constrain_float(aileron - flap_percent * 45, -4500, 4500);
     SRV_Channels::set_output_scaled(SRV_Channel::k_flaperon_left, flaperon_left);
@@ -275,11 +280,11 @@ void Plane::dspoiler_update(void)
           spoilers to both wings. Get flap percentage from k_flap_auto, which is set
           in set_servos_flaps() as the maximum of manual and auto flap control
          */
-        const int16_t flap_percent = SRV_Channels::get_output_scaled(SRV_Channel::k_flap_auto);
+        const float flap_percent = SRV_Channels::get_slew_limited_output_scaled(SRV_Channel::k_flap_auto);
 
-        if (flap_percent > 0) {
-            float inner_flap_scaled = (float)flap_percent;
-            float outer_flap_scaled = (float)flap_percent;
+        if (is_positive(flap_percent)) {
+            float inner_flap_scaled = flap_percent;
+            float outer_flap_scaled = flap_percent;
             if (progressive_crow) {
                 // apply 0 - full inner from 0 to 50% flap then add in outer above 50%
                 inner_flap_scaled = constrain_float(inner_flap_scaled * 2, 0,100);
@@ -552,13 +557,17 @@ void Plane::set_servos_controlled(void)
             // manual pass through of throttle while throttle is suppressed
             SRV_Channels::set_output_scaled(SRV_Channel::k_throttle, get_throttle_input(true));
         }
+#if AP_SCRIPTING_ENABLED
+    } else if (plane.nav_scripting.current_ms > 0 && nav_scripting.enabled) {
+            SRV_Channels::set_output_scaled(SRV_Channel::k_throttle, plane.nav_scripting.throttle_pct);
+#endif
     } else if (control_mode == &mode_stabilize ||
                control_mode == &mode_training ||
                control_mode == &mode_acro ||
                control_mode == &mode_fbwa ||
                control_mode == &mode_autotune) {
         // a manual throttle mode
-        if (failsafe.throttle_counter) {
+        if (!rc().has_valid_input()) {
             SRV_Channels::set_output_scaled(SRV_Channel::k_throttle, 0.0);
         } else if (g.throttle_passthru_stabilize) {
             // manual pass through of throttle while in FBWA or
@@ -612,7 +621,7 @@ void Plane::set_servos_flaps(void)
     int8_t manual_flap_percent = 0;
 
     // work out any manual flap input
-    if (channel_flap != nullptr && !failsafe.rc_failsafe && failsafe.throttle_counter == 0) {
+    if (channel_flap != nullptr && rc().has_valid_input()) {
         manual_flap_percent = channel_flap->percent_input();
     }
 
@@ -628,6 +637,12 @@ void Plane::set_servos_flaps(void)
         } else if ( g.flap_1_speed != 0 && flapSpeedSource <= g.flap_1_speed) {
             auto_flap_percent = g.flap_1_percent;
         } //else flaps stay at default zero deflection
+
+#if HAL_SOARING_ENABLED
+        if (control_mode == &mode_thermal) {
+            auto_flap_percent = g2.soaring_controller.get_thermalling_flap();
+        }
+#endif
 
         /*
           special flap levels for takeoff and landing. This works
@@ -665,13 +680,11 @@ void Plane::set_servos_flaps(void)
     SRV_Channels::set_output_scaled(SRV_Channel::k_flap_auto, auto_flap_percent);
     SRV_Channels::set_output_scaled(SRV_Channel::k_flap, manual_flap_percent);
 
-    if (g.flap_slewrate) {
-        SRV_Channels::limit_slew_rate(SRV_Channel::k_flap_auto, g.flap_slewrate, G_Dt);
-        SRV_Channels::limit_slew_rate(SRV_Channel::k_flap, g.flap_slewrate, G_Dt);
-    }    
+    SRV_Channels::set_slew_rate(SRV_Channel::k_flap_auto, g.flap_slewrate, 100, G_Dt);
+    SRV_Channels::set_slew_rate(SRV_Channel::k_flap, g.flap_slewrate, 100, G_Dt);
 
     // output to flaperons, if any
-    flaperon_update(auto_flap_percent);
+    flaperon_update();
 }
 
 #if LANDING_GEAR_ENABLED == ENABLED
@@ -696,19 +709,6 @@ void Plane::set_landing_gear(void)
 }
 #endif // LANDING_GEAR_ENABLED
 
-/*
-  apply vtail and elevon mixers
-  the rewrites radio_out for the corresponding channels
- */
-void Plane::servo_output_mixers(void)
-{
-    // mix elevons and vtail channels
-    channel_function_mixer(SRV_Channel::k_aileron, SRV_Channel::k_elevator, SRV_Channel::k_elevon_left, SRV_Channel::k_elevon_right);
-    channel_function_mixer(SRV_Channel::k_rudder,  SRV_Channel::k_elevator, SRV_Channel::k_vtail_right, SRV_Channel::k_vtail_left);
-
-    // implement differential spoilers
-    dspoiler_update();
-}
 
 /*
   support for twin-engine planes
@@ -716,7 +716,7 @@ void Plane::servo_output_mixers(void)
 void Plane::servos_twin_engine_mix(void)
 {
     float throttle = SRV_Channels::get_output_scaled(SRV_Channel::k_throttle);
-    float rud_gain = float(plane.g2.rudd_dt_gain) / 100;
+    float rud_gain = float(plane.g2.rudd_dt_gain) * 0.01f;
     rudder_dt = rud_gain * SRV_Channels::get_output_scaled(SRV_Channel::k_rudder) / SERVO_MAX;
 
 #if ADVANCED_FAILSAFE == ENABLED
@@ -764,23 +764,25 @@ void Plane::servos_twin_engine_mix(void)
 void Plane::force_flare(void)
 {
 #if HAL_QUADPLANE_ENABLED
-    if (quadplane.in_transition()) {
+    if (quadplane.in_transition() && plane.arming.is_armed()) { //allows for ground checking of flare tilts
         return;
     }
     if (control_mode->is_vtol_mode()) {
         return;
     }
-#endif
-    if (!control_mode->does_auto_throttle() && channel_throttle->in_trim_dz() && flare_mode != FlareMode::FLARE_DISABLED) {
-        int32_t tilt = -SERVO_MAX;  //this is tilts up for a normal tiltrotor
-#if HAL_QUADPLANE_ENABLED
+    /* to be active must be:
+       -manual throttle mode
+       -in an enabled flare mode (RC switch active)
+       -at zero thrust: in throttle trim dz except for sprung throttle option where trim is at hover stick
+    */
+    if (!control_mode->does_auto_throttle() && flare_mode != FlareMode::FLARE_DISABLED && throttle_at_zero()) {
+        int32_t tilt = -SERVO_MAX;  //this is tilts up for a normal tiltrotor if at zero thrust throttle stick      
         if (quadplane.tiltrotor.enabled() && (quadplane.tiltrotor.type == Tiltrotor::TILT_TYPE_BICOPTER)) {
             tilt = 0; // this is tilts up for a Bicopter
         }
         if (quadplane.tailsitter.enabled()) {
             tilt = SERVO_MAX; //this is tilts up for a tailsitter
         }
-#endif
         SRV_Channels::set_output_scaled(SRV_Channel::k_motor_tilt, tilt);
         SRV_Channels::set_output_scaled(SRV_Channel::k_tiltMotorLeft, tilt);
         SRV_Channels::set_output_scaled(SRV_Channel::k_tiltMotorRight, tilt);
@@ -793,7 +795,8 @@ void Plane::force_flare(void)
             SRV_Channels::set_output_scaled(SRV_Channel::k_throttleLeft, throttle_min);
             SRV_Channels::set_output_scaled(SRV_Channel::k_throttleRight, throttle_min);
         }
-     }
+    }
+#endif
 }
 
 /* Set the flight control servos based on the current calculated values
@@ -961,6 +964,10 @@ void Plane::servos_output(void)
     // support twin-engine aircraft
     servos_twin_engine_mix();
 
+    // run vtail and elevon mixers
+    channel_function_mixer(SRV_Channel::k_aileron, SRV_Channel::k_elevator, SRV_Channel::k_elevon_left, SRV_Channel::k_elevon_right);
+    channel_function_mixer(SRV_Channel::k_rudder,  SRV_Channel::k_elevator, SRV_Channel::k_vtail_right, SRV_Channel::k_vtail_left);
+
 #if HAL_QUADPLANE_ENABLED
     // cope with tailsitters and bicopters
     quadplane.tailsitter.output();
@@ -969,9 +976,9 @@ void Plane::servos_output(void)
 
     // support forced flare option
     force_flare();
- 
-    // run vtail and elevon mixers
-    servo_output_mixers();
+
+    // implement differential spoilers
+    dspoiler_update();
 
     //  set control surface servos to neutral
     landing_neutral_control_surface_servos();

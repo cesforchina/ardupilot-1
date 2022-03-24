@@ -42,8 +42,6 @@ void Rover::init_ardupilot()
 
     rssi.init();
 
-    g2.airspeed.init();
-
     g2.windvane.init(serial_manager);
 
     // init baro before we start the GCS, so that the CLI baro test works
@@ -67,6 +65,10 @@ void Rover::init_ardupilot()
     // initialise compass
     AP::compass().set_log_bit(MASK_LOG_COMPASS);
     AP::compass().init();
+
+#if AP_AIRSPEED_ENABLED
+    airspeed.set_log_bit(MASK_LOG_IMU);
+#endif
 
     // initialise rangefinder
     rangefinder.set_log_rfnd_bit(MASK_LOG_RANGEFINDER);
@@ -136,6 +138,11 @@ void Rover::init_ardupilot()
 
     rover.g2.sailboat.init();
 
+    // boat should loiter after completing a mission to avoid drifting off
+    if (is_boat()) {
+        rover.g2.mis_done_behave.set_default(ModeAuto::Mis_Done_Behave::MIS_DONE_BEHAVE_LOITER);
+    }
+
     // flag that initialisation has completed
     initialised = true;
 }
@@ -163,9 +170,9 @@ void Rover::startup_ground(void)
         );
 #endif
 
-#ifdef ENABLE_SCRIPTING
+#if AP_SCRIPTING_ENABLED
     g2.scripting.init();
-#endif // ENABLE_SCRIPTING
+#endif // AP_SCRIPTING_ENABLED
 
     // we don't want writes to the serial port to cause us to pause
     // so set serial ports non-blocking once we are ready to drive

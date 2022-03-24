@@ -87,6 +87,7 @@ default_ports = ['/dev/serial/by-id/usb-Ardu*',
                  '/dev/serial/by-id/usb-Auterion*',
                  '/dev/serial/by-id/usb-*-BL_*',
                  '/dev/serial/by-id/usb-*_BL_*',
+                 '/dev/serial/by-id/usb-Swift-Flyer*',
                  '/dev/tty.usbmodem*']
 
 if "cygwin" in _platform or is_WSL:
@@ -660,10 +661,33 @@ class uploader(object):
             size_bytes = chr(size)
         print("\n", end='')
         self.__drawProgressBar(label, 1, 100)
+
         expect_crc = fw.extf_crc(size)
         self.__send(uploader.EXTF_GET_CRC +
                     size_bytes + uploader.EOC)
-        report_crc = self.__recv_int()
+
+        # crc can be slow, give it 10s
+        deadline = time.time() + 10.0
+        while time.time() < deadline:
+
+            # Draw progress bar
+            estimatedTimeRemaining = deadline-time.time()
+            if estimatedTimeRemaining >= 4.0:
+                self.__drawProgressBar(label, 10.0-estimatedTimeRemaining, 4.0)
+            else:
+                self.__drawProgressBar(label, 5.0, 5.0)
+                sys.stdout.write(" (timeout: %d seconds) " % int(deadline-time.time()))
+                sys.stdout.flush()
+
+            try:
+                report_crc = self.__recv_int()
+                break
+            except Exception:
+                continue
+
+        if time.time() >= deadline:
+            raise RuntimeError("Program CRC timed out")
+
         self.__getSync()
         if report_crc != expect_crc:
             print("\nExpected 0x%x" % expect_crc)

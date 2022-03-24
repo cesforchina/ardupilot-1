@@ -42,20 +42,32 @@ public:
     void bicopter_output();
     void tilt_compensate_angle(float *thrust, uint8_t num_motors, float non_tilted_mul, float tilted_mul);
     void tilt_compensate(float *thrust, uint8_t num_motors);
+    bool tilt_over_max_angle(void) const;
 
     bool is_motor_tilting(uint8_t motor) const {
         return (((uint8_t)tilt_mask.get()) & (1U<<motor));
     }
 
     bool fully_fwd() const;
-    float tilt_max_change(bool up) const;
+    bool fully_up() const;
+    float tilt_max_change(bool up, bool in_flap_range = false) const;
+    float get_fully_forward_tilt() const;
+    float get_forward_flight_tilt() const;
 
     // update yaw target for tiltrotor transition
     void update_yaw_target();
 
     bool is_vectored() const { return enabled() && _is_vectored; }
 
+    bool has_fw_motor() const { return _have_fw_motor; }
+
+    bool has_vtol_motor() const { return _have_vtol_motor; }
+
     bool motors_active() const { return enabled() && _motors_active; }
+
+    // true if the tilts have completed slewing
+    // always return true if not enabled or not a continuous type
+    bool tilt_angle_achieved() const { return !enabled() || (type != TILT_TYPE_CONTINUOUS) || angle_achieved; }
 
     AP_Int8 enable;
     AP_Int16 tilt_mask;
@@ -66,6 +78,7 @@ public:
     AP_Float tilt_yaw_angle;
     AP_Float fixed_angle;
     AP_Float fixed_gain;
+    AP_Float flap_angle_deg;
 
     float current_tilt;
     float current_throttle;
@@ -86,6 +99,16 @@ public:
 private:
 
     bool setup_complete;
+
+    // true if a fixed forward motor is setup
+    bool _have_fw_motor;
+
+    // true if all motors tilt with no fixed VTOL motor
+    bool _have_vtol_motor;
+
+    // true if the current tilt angle is equal to the desired
+    // with slow tilt rates the tilt angle can lag
+    bool angle_achieved;
 
     // refences for convenience
     QuadPlane& quadplane;

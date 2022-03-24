@@ -690,10 +690,44 @@ struct PACKED log_STAK {
 struct PACKED log_File {
     LOG_PACKET_HEADER;
     char filename[16];
-    uint16_t offset;
-    uint16_t length;
+    uint32_t offset;
+    uint8_t length;
     char data[64];
 };
+
+struct PACKED log_Scripting {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    char name[16];
+    uint32_t run_time;
+    int32_t total_mem;
+    int32_t run_mem;
+};
+
+struct PACKED log_MotBatt {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    float   lift_max;
+    float   bat_volt;
+    float   th_limit;
+    float th_average_max;
+    uint8_t mot_fail_flags;
+};
+
+struct PACKED log_VER {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    uint8_t board_type;
+    uint16_t board_subtype;
+    uint8_t major;
+    uint8_t minor;
+    uint8_t patch;
+    uint8_t fw_type;
+    uint32_t git_hash;
+    char fw_string[64];
+    uint16_t _APJ_BOARD_ID;
+};
+
 
 // FMT messages define all message formats other than FMT
 // UNIT messages define units which can be referenced by FMTU messages
@@ -735,7 +769,7 @@ struct PACKED log_File {
 // @Field: Offset: Offset from parameter
 // @Field: U: True if sensor is being used
 // @Field: H: True if sensor is healthy
-// @Field: Hfp: Probability sensor has failed
+// @Field: Hp: Probability sensor is healthy
 // @Field: Pri: True if sensor is the primary sensor
 
 // @LoggerMessage: BCN
@@ -945,7 +979,7 @@ struct PACKED log_File {
 // @Field: Name: parameter name
 // @Field: Value: parameter value
 
-// @LoggerMessage: PIDR,PIDP,PIDY,PIDA,PIDS
+// @LoggerMessage: PIDR,PIDP,PIDY,PIDA,PIDS,PIDN,PIDE
 // @Description: Proportional/Integral/Derivative gain values for Roll/Pitch/Yaw/Altitude/Steering
 // @Field: TimeUS: Time since system startup
 // @Field: Tar: desired value
@@ -1037,6 +1071,13 @@ struct PACKED log_File {
 // @Field: Lat: latitude of rally point
 // @Field: Lng: longitude of rally point
 // @Field: Alt: altitude of rally point
+
+// @LoggerMessage: RCI2
+// @Description: (More) RC input channels to vehicle
+// @Field: TimeUS: Time since system startup
+// @Field: C15: channel 15 input
+// @Field: C16: channel 16 input
+// @Field: OMask: bitmask of RC channels being overridden by mavlink input
 
 // @LoggerMessage: RCIN
 // @Description: RC input channels to vehicle
@@ -1211,6 +1252,23 @@ struct PACKED log_File {
 // @Field: Free: free stack
 // @Field: Name: thread name
 
+// @LoggerMessage: SCR
+// @Description: Scripting runtime stats
+// @Field: TimeUS: Time since system startup
+// @Field: Name: script name
+// @Field: Runtime: run time
+// @Field: Total_mem: total memory useage
+// @Field: Run_mem: run memory usage
+
+// @LoggerMessage: MOTB
+// @Description: Motor mixer information
+// @Field: TimeUS: Time since system startup
+// @Field: LiftMax: Maximum motor compensation gain
+// @Field: BatVolt: Ratio betwen detected battery voltage and maximum battery voltage
+// @Field: ThLimit: Throttle limit set due to battery current limitations
+// @Field: ThrAvMx: Maximum average throttle that can be used to maintain attitude controll, derived from throttle mix params
+// @Field: FailFlags: bit 0 motor failed, bit 1 motors balanced, should be 2 in normal flight
+
 // messages for all boards
 #define LOG_COMMON_STRUCTURES \
     { LOG_FORMAT_MSG, sizeof(log_Format), \
@@ -1245,7 +1303,7 @@ LOG_STRUCTURE_FROM_PRECLAND \
     { LOG_RADIO_MSG, sizeof(log_Radio), \
       "RAD", "QBBBBBHH", "TimeUS,RSSI,RemRSSI,TxBuf,Noise,RemNoise,RxErrors,Fixed", "s-------", "F-------", true }, \
 LOG_STRUCTURE_FROM_CAMERA \
-    { LOG_ARSP_MSG, sizeof(log_ARSP), "ARSP",  "QBffcffBBfB", "TimeUS,I,Airspeed,DiffPress,Temp,RawPress,Offset,U,H,Hfp,Pri", "s#nPOPP----", "F-00B00----", true }, \
+    { LOG_ARSP_MSG, sizeof(log_ARSP), "ARSP",  "QBffcffBBfB", "TimeUS,I,Airspeed,DiffPress,Temp,RawPress,Offset,U,H,Hp,Pri", "s#nPOPP----", "F-00B00----", true }, \
     LOG_STRUCTURE_FROM_BATTMONITOR \
     { LOG_MAG_MSG, sizeof(log_MAG), \
       "MAG", "QBhhhhhhhhhBI",    "TimeUS,I,MagX,MagY,MagZ,OfsX,OfsY,OfsZ,MOX,MOY,MOZ,Health,S", "s#GGGGGGGGG-s", "F-CCCCCCCCC-F", true }, \
@@ -1327,14 +1385,20 @@ LOG_STRUCTURE_FROM_VISUALODOM \
     { LOG_STAK_MSG, sizeof(log_STAK), \
       "STAK", "QBBHHN", "TimeUS,Id,Pri,Total,Free,Name", "s#----", "F-----", true }, \
     { LOG_FILE_MSG, sizeof(log_File), \
-      "FILE",   "NhhZ",       "FileName,Offset,Length,Data", "----", "----" }, \
-LOG_STRUCTURE_FROM_AIS \
+      "FILE",   "NIBZ",       "FileName,Offset,Length,Data", "----", "----" }, \
+LOG_STRUCTURE_FROM_AIS, \
+    { LOG_SCRIPTING_MSG, sizeof(log_Scripting), \
+      "SCR",   "QNIii", "TimeUS,Name,Runtime,Total_mem,Run_mem", "s-sbb", "F-F--", true }, \
+    { LOG_VER_MSG, sizeof(log_VER), \
+      "VER",   "QBHBBBBIZH", "TimeUS,BT,BST,Maj,Min,Pat,FWT,GH,FWS,APJ", "s---------", "F---------", false }, \
+    { LOG_MOTBATT_MSG, sizeof(log_MotBatt), \
+      "MOTB", "QffffB",  "TimeUS,LiftMax,BatVolt,ThLimit,ThrAvMx,FailFlags", "s-----", "F-----" , true }
 
 // message types 0 to 63 reserved for vehicle specific use
 
 // message types for common messages
 enum LogMessages : uint8_t {
-    LOG_PARAMETER_MSG = 64,
+    LOG_PARAMETER_MSG = 32,
     LOG_IDS_FROM_NAVEKF2,
     LOG_IDS_FROM_NAVEKF3,
     LOG_MESSAGE_MSG,
@@ -1358,14 +1422,6 @@ enum LogMessages : uint8_t {
 
     LOG_IDS_FROM_GPS,
 
-    // LOG_MODE_MSG is used as a check for duplicates. Do not add between this and LOG_FORMAT_MSG
-    LOG_MODE_MSG,
-
-    LOG_FORMAT_MSG = 128, // this must remain #128
-
-    LOG_IDS_FROM_DAL,
-    LOG_IDS_FROM_INERTIALSENSOR,
-
     LOG_PIDR_MSG,
     LOG_PIDP_MSG,
     LOG_PIDY_MSG,
@@ -1382,9 +1438,18 @@ enum LogMessages : uint8_t {
     LOG_FORMAT_UNITS_MSG,
     LOG_UNIT_MSG,
     LOG_MULT_MSG,
-
     LOG_RALLY_MSG,
+
+    // LOG_MODE_MSG is used as a check for duplicates. Do not add between this and LOG_FORMAT_MSG
+    LOG_MODE_MSG,
+
+    LOG_FORMAT_MSG = 128, // this must remain #128
+
+    LOG_IDS_FROM_DAL,
+    LOG_IDS_FROM_INERTIALSENSOR,
+
     LOG_IDS_FROM_VISUALODOM,
+    LOG_IDS_FROM_AVOIDANCE,
     LOG_BEACON_MSG,
     LOG_PROXIMITY_MSG,
     LOG_DF_FILE_STATS,
@@ -1397,7 +1462,6 @@ enum LogMessages : uint8_t {
     LOG_ERROR_MSG,
     LOG_ADSB_MSG,
     LOG_ARM_DISARM_MSG,
-    LOG_IDS_FROM_AVOIDANCE,
     LOG_WINCH_MSG,
     LOG_PSCN_MSG,
     LOG_PSCE_MSG,
@@ -1407,14 +1471,14 @@ enum LogMessages : uint8_t {
     LOG_IDS_FROM_AIS,
     LOG_STAK_MSG,
     LOG_FILE_MSG,
+    LOG_SCRIPTING_MSG,
+    LOG_VIDEO_STABILISATION_MSG,
+    LOG_MOTBATT_MSG,
+    LOG_VER_MSG,
 
     _LOG_LAST_MSG_
 };
 
-static_assert(_LOG_LAST_MSG_ <= 255, "Too many message formats");
+// we reserve ID #255 for future expansion
+static_assert(_LOG_LAST_MSG_ < 255, "Too many message formats");
 static_assert(LOG_MODE_MSG < 128, "Duplicate message format IDs");
-
-enum LogOriginType {
-    ekf_origin = 0,
-    ahrs_home = 1
-};

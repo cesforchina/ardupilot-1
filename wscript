@@ -155,6 +155,11 @@ def options(opt):
         default=False,
         help='enable OS level asserts.')
 
+    g.add_option('--save-temps',
+        action='store_true',
+        default=False,
+        help='save compiler temporary files.')
+    
     g.add_option('--enable-malloc-guard',
         action='store_true',
         default=False,
@@ -387,6 +392,7 @@ def configure(cfg):
     cfg.env.BOOTLOADER = cfg.options.bootloader
     cfg.env.ENABLE_MALLOC_GUARD = cfg.options.enable_malloc_guard
     cfg.env.ENABLE_STATS = cfg.options.enable_stats
+    cfg.env.SAVE_TEMPS = cfg.options.save_temps
 
     cfg.env.HWDEF_EXTRA = cfg.options.extra_hwdef
     if cfg.env.HWDEF_EXTRA:
@@ -502,17 +508,17 @@ def configure(cfg):
     # Always use system extensions
     cfg.define('_GNU_SOURCE', 1)
 
-    cfg.write_config_header(os.path.join(cfg.variant, 'ap_config.h'))
+    cfg.write_config_header(os.path.join(cfg.variant, 'ap_config.h'), guard='_AP_CONFIG_H_')
 
     # add in generated flags
     cfg.env.CXXFLAGS += ['-include', 'ap_config.h']
 
     _collect_autoconfig_files(cfg)
 
-def generate_canard_dsdlc(cfg):
-    dsdlc_gen_path = cfg.bldnode.make_node('modules/libcanard/dsdlc_generated').abspath()
+def generate_dronecan_dsdlc(cfg):
+    dsdlc_gen_path = cfg.bldnode.make_node('modules/DroneCAN/libcanard/dsdlc_generated').abspath()
     src = cfg.srcnode.ant_glob('modules/DroneCAN/DSDL/* libraries/AP_UAVCAN/dsdl/*', dir=True, src=False)
-    dsdlc_path = cfg.srcnode.make_node('modules/canard_dsdlc/canard_dsdlc.py').abspath()
+    dsdlc_path = cfg.srcnode.make_node('modules/DroneCAN/dronecan_dsdlc/dronecan_dsdlc.py').abspath()
     if not os.path.exists(dsdlc_path):
         print("Please update submodules with: git submodule update --recursive --init")
         sys.exit(1)
@@ -606,7 +612,7 @@ def _build_dynamic_sources(bld):
     if not bld.env.BOOTLOADER:
         bld(
             features='mavgen',
-            source='modules/mavlink/message_definitions/v1.0/ardupilotmega.xml',
+            source='modules/mavlink/message_definitions/v1.0/all.xml',
             output_dir='libraries/GCS_MAVLink/include/mavlink/v2.0/',
             name='mavlink',
             # this below is not ideal, mavgen tool should set this, but that's not
@@ -620,7 +626,7 @@ def _build_dynamic_sources(bld):
     if (bld.get_board().with_can or bld.env.HAL_NUM_CAN_IFACES) and not bld.env.AP_PERIPH:
         bld(
             features='uavcangen',
-            source=bld.srcnode.ant_glob('modules/DroneCAN/DSDL/*', dir=True, src=False),
+            source=bld.srcnode.ant_glob('modules/DroneCAN/DSDL/* libraries/AP_UAVCAN/dsdl/*', dir=True, src=False),
             output_dir='modules/uavcan/libuavcan/include/dsdlc_generated',
             name='uavcan',
             export_includes=[
@@ -734,11 +740,11 @@ def _load_pre_build(bld):
         return
     brd = bld.get_board()
     if bld.env.AP_PERIPH:
-        dsdlc_gen_path = bld.bldnode.make_node('modules/libcanard/dsdlc_generated/include').abspath()
+        dsdlc_gen_path = bld.bldnode.make_node('modules/DroneCAN/libcanard/dsdlc_generated/include').abspath()
         #check if canard dsdlc directory empty
         # check if directory exists
         if not os.path.exists(dsdlc_gen_path) or not os.listdir(dsdlc_gen_path):
-            generate_canard_dsdlc(bld)
+            generate_dronecan_dsdlc(bld)
     if getattr(brd, 'pre_build', None):
         brd.pre_build(bld)    
 

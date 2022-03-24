@@ -138,6 +138,8 @@ void* get_addr_mem_region_end_addr(void *addr);
 
 // return the size of crash dump
 uint32_t stm32_crash_dump_size(void);
+uint32_t stm32_crash_dump_addr(void);
+uint32_t stm32_crash_dump_max_size(void);
 
 typedef enum  {
     Reset = 1,
@@ -158,6 +160,9 @@ void save_fault_watchdog(uint16_t line, FaultType fault_type, uint32_t fault_add
 bool stm32_rand_generate_blocking(unsigned char* output, unsigned int sz, uint32_t timeout_us);
 unsigned int stm32_rand_generate_nonblocking(unsigned char* output, unsigned int sz);
 #endif
+
+void stm32_flash_protect_flash(bool bootloader, bool protect);
+void stm32_flash_unprotect_flash(void);
 
 // allow stack view code to show free ISR stack
 extern uint32_t __main_stack_base__;

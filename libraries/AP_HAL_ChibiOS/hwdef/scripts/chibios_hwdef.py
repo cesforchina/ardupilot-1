@@ -12,6 +12,7 @@ import shlex
 import pickle
 import re
 import shutil
+import filecmp
 
 parser = argparse.ArgumentParser("chibios_pins.py")
 parser.add_argument(
@@ -119,6 +120,9 @@ dual_USB_enabled = False
 
 # list of device patterns that can't be shared
 dma_noshare = []
+
+# integer defines
+intdefines = {}
 
 def is_int(str):
     '''check if a string is an integer'''
@@ -367,6 +371,15 @@ class generic_pin(object):
              self.label.endswith('_CTS') or
              self.label.endswith('_RTS'))):
             v = "PULLUP"
+
+        if (self.type.startswith('SWD') and
+            'SWDIO' in self.label):
+            v = "PULLUP"
+
+        if (self.type.startswith('SWD') and
+            'SWCLK' in self.label):
+            v = "PULLDOWN"
+
         # generate pullups for SDIO and SDMMC
         if (self.type.startswith('SDIO') or
             self.type.startswith('SDMMC')) and (
@@ -558,9 +571,9 @@ class generic_pin(object):
     def periph_instance(self):
         '''return peripheral instance'''
         if self.periph_type() == 'PERIPH_TYPE::GPIO':
-            result = re.match(r'[A-Z_]*([0-9]*)', self.label)
+            result = re.match(r'[A-Z_]*([0-9]+)', self.label)
         else:
-            result = re.match(r'[A-Z_]*([0-9]*)', self.type)
+            result = re.match(r'[A-Z_]*([0-9]+)', self.type)
         if result:
             return int(result.group(1))
         return 0
@@ -677,6 +690,15 @@ def enable_can(f):
         f.write('#define CAN1_BASE CAN_BASE\n')
     env_vars['HAL_NUM_CAN_IFACES'] = str(len(base_list))
 
+    if mcu_series.startswith("STM32H7") and not args.bootloader:
+        # set maximum supported canfd bit rate in MBits/sec
+        canfd_supported = int(get_config('CANFD_SUPPORTED', 0, default=4, required=False))
+        f.write('#define HAL_CANFD_SUPPORTED %d\n' % canfd_supported)
+        env_vars['HAL_CANFD_SUPPORTED'] = canfd_supported
+    else:
+        canfd_supported = int(get_config('CANFD_SUPPORTED', 0, default=0, required=False))
+        f.write('#define HAL_CANFD_SUPPORTED %d\n' % canfd_supported)
+        env_vars['HAL_CANFD_SUPPORTED'] = canfd_supported
 
 def has_sdcard_spi():
     '''check for sdcard connected to spi bus'''
@@ -688,43 +710,114 @@ def has_sdcard_spi():
 
 def get_ram_map():
     '''get RAM_MAP. May be different for bootloader'''
+    env_vars['APP_RAM_START'] = None
     if args.bootloader:
         ram_map = get_mcu_config('RAM_MAP_BOOTLOADER', False)
+        if ram_map is not None:
+            app_ram_map = get_mcu_config('RAM_MAP', True)
+            if app_ram_map[0][0] != ram_map[0][0]:
+                # we need to find the location of app_ram_map[0] in ram_map
+                for i in range(len(ram_map)):
+                    if app_ram_map[0][0] == ram_map[i][0]:
+                        env_vars['APP_RAM_START'] = i
+            return ram_map
+    elif env_vars['EXT_FLASH_SIZE_MB']:
+        ram_map = get_mcu_config('RAM_MAP_EXTERNAL_FLASH', False)
         if ram_map is not None:
             return ram_map
     return get_mcu_config('RAM_MAP', True)
 
-
-def get_flash_npages():
+def get_flash_pages_sizes():
     global mcu_series
     if mcu_series.startswith('STM32F4'):
         if get_config('FLASH_SIZE_KB', type=int) == 512:
-            return 8
+            return [ 16, 16, 16, 16, 64, 128, 128, 128 ]
         elif get_config('FLASH_SIZE_KB', type=int) == 1024:
-            return 12
+            return [ 16, 16, 16, 16, 64, 128, 128, 128,
+                     128, 128, 128, 128 ]
         elif get_config('FLASH_SIZE_KB', type=int) == 2048:
-            return 24
+            return [ 16, 16, 16, 16, 64, 128, 128, 128,
+                     128, 128, 128, 128,
+                     128, 128, 128, 128,
+                     128, 128, 128, 128,
+                     128, 128, 128, 128 ]
         else:
             raise Exception("Unsupported flash size %u" % get_config('FLASH_SIZE_KB', type=int))
     elif mcu_series.startswith('STM32F7'):
         if get_config('FLASH_SIZE_KB', type=int) == 512:
-            return 8
+            return [ 16, 16, 16, 16, 64, 128, 128, 128 ]
         elif get_config('FLASH_SIZE_KB', type=int) == 1024:
-            return 8
+            return [ 32, 32, 32, 32, 128, 256, 256, 256 ]
         elif get_config('FLASH_SIZE_KB', type=int) == 2048:
-            return 12
+            return [ 32, 32, 32, 32, 128, 256, 256, 256,
+                     256, 256, 256, 256]
         else:
             raise Exception("Unsupported flash size %u" % get_config('FLASH_SIZE_KB', type=int))
     elif mcu_series.startswith('STM32H7'):
-        return get_config('FLASH_SIZE_KB', type=int)//128
+        return [ 128 ] * (get_config('FLASH_SIZE_KB', type=int)//128)
     elif mcu_series.startswith('STM32F100') or mcu_series.startswith('STM32F103'):
-        return get_config('FLASH_SIZE_KB', type=int)
+        return [ 1 ] * get_config('FLASH_SIZE_KB', type=int)
+    elif (mcu_series.startswith('STM32F105') or
+          mcu_series.startswith('STM32F3') or
+          mcu_series.startswith('STM32G4') or
+          mcu_series.startswith('STM32L4')):
+        return [ 2 ] * (get_config('FLASH_SIZE_KB', type=int)//2)
     else:
-        return get_config('FLASH_SIZE_KB', type=int)//2
+        raise Exception("Unsupported flash size MCU %s" % mcu_series)
 
+def get_flash_npages():
+    page_sizes = get_flash_pages_sizes()
+    total_size = sum(pages)
+    if total_size != get_config('FLASH_SIZE_KB',type=int):
+        raise Exception("Invalid flash size MCU %s" % mcu_series)
+    return len(pages)
+
+def get_flash_page_offset_kb(sector):
+    '''return the offset in flash of a page number'''
+    pages = get_flash_pages_sizes()
+    offset = 0
+    for i in range(sector):
+        offset += pages[i]
+    return offset
+
+def get_storage_flash_page():
+    '''get STORAGE_FLASH_PAGE either from this hwdef or from hwdef.dat
+       in the same directory if this is a bootloader
+    '''
+    storage_flash_page = get_config('STORAGE_FLASH_PAGE', default=None, type=int, required=False)
+    if storage_flash_page is not None:
+        return storage_flash_page
+    if args.bootloader and args.hwdef[0].find("-bl") != -1:
+        hwdefdat = args.hwdef[0].replace("-bl", "")
+        if os.path.exists(hwdefdat):
+            ret = None
+            lines = open(hwdefdat,'r').readlines()
+            for line in lines:
+                result = re.match(r'STORAGE_FLASH_PAGE\s*([0-9]+)', line)
+                if result:
+                    ret = int(result.group(1))
+            return ret
+    return None
+
+def validate_flash_storage_size():
+    '''check there is room for storage with HAL_STORAGE_SIZE'''
+    if intdefines.get('HAL_WITH_RAMTRON',0) == 1:
+        # no check for RAMTRON storage
+        return
+    storage_flash_page = get_storage_flash_page()
+    pages = get_flash_pages_sizes()
+    page_size = pages[storage_flash_page] * 1024
+    storage_size = intdefines.get('HAL_STORAGE_SIZE', None)
+    if storage_size is None:
+        error('Need HAL_STORAGE_SIZE define')
+    if storage_size >= page_size:
+        error("HAL_STORAGE_SIZE too large %u %u" % (storage_size, page_size))
+    if page_size == 16384 and storage_size > 15360:
+        error("HAL_STORAGE_SIZE invalid, needs to be 15360")
 
 def write_mcu_config(f):
     '''write MCU config defines'''
+    f.write('#define CHIBIOS_BOARD_NAME "%s"\n' % os.path.basename(os.path.dirname(args.hwdef[0])))
     f.write('// MCU type (ChibiOS define)\n')
     f.write('#define %s_MCUCONF\n' % get_config('MCU'))
     mcu_subtype = get_config('MCU', 1)
@@ -749,6 +842,7 @@ def write_mcu_config(f):
         f.write('#define USE_POSIX\n\n')
         f.write('#define HAL_USE_SDC TRUE\n')
         f.write('#define STM32_SDC_USE_SDMMC2 TRUE\n')
+        f.write('#define HAL_USE_SDMMC 1\n')
         build_flags.append('USE_FATFS=yes')
         env_vars['WITH_FATFS'] = "1"
     elif have_type_prefix('SDMMC'):
@@ -756,6 +850,7 @@ def write_mcu_config(f):
         f.write('#define USE_POSIX\n\n')
         f.write('#define HAL_USE_SDC TRUE\n')
         f.write('#define STM32_SDC_USE_SDMMC1 TRUE\n')
+        f.write('#define HAL_USE_SDMMC 1\n')
         build_flags.append('USE_FATFS=yes')
         env_vars['WITH_FATFS'] = "1"
     elif has_sdcard_spi():
@@ -823,57 +918,63 @@ def write_mcu_config(f):
             if 'HAL_USE_CAN' in d:
                 using_chibios_can = True
             f.write('#define %s\n' % d[7:])
+            # extract numerical defines for processing by other parts of the script
+            result = re.match(r'define\s*([A-Z_]+)\s*([0-9]+)', d)
+            if result:
+                intdefines[result.group(1)] = int(result.group(2))
 
     if have_type_prefix('CAN') and not using_chibios_can:
         enable_can(f)
     flash_size = get_config('FLASH_SIZE_KB', type=int)
     f.write('#define BOARD_FLASH_SIZE %u\n' % flash_size)
     env_vars['BOARD_FLASH_SIZE'] = flash_size
-    f.write('#define CRT1_AREAS_NUMBER 1\n')
 
     flash_reserve_start = get_config(
         'FLASH_RESERVE_START_KB', default=16, type=int)
     f.write('\n// location of loaded firmware\n')
     f.write('#define FLASH_LOAD_ADDRESS 0x%08x\n' % (0x08000000 + flash_reserve_start*1024))
-    f.write('#define EXTERNAL_PROG_FLASH_MB %u\n' % get_config('EXTERNAL_PROG_FLASH_MB', default=0, type=int))
+    # can be no persistent parameters if no space allocated for them
+    if not args.bootloader and flash_reserve_start == 0:
+        f.write('#define HAL_ENABLE_SAVE_PERSISTENT_PARAMS 0\n')
 
-    env_vars['EXTERNAL_PROG_FLASH_MB'] = get_config('EXTERNAL_PROG_FLASH_MB', default=0, type=int)
+    f.write('#define EXT_FLASH_SIZE_MB %u\n' % get_config('EXT_FLASH_SIZE_MB', default=0, type=int))
+    f.write('#define EXT_FLASH_RESERVE_START_KB %u\n' % get_config('EXT_FLASH_RESERVE_START_KB', default=0, type=int))
+    f.write('#define EXT_FLASH_RESERVE_END_KB %u\n' % get_config('EXT_FLASH_RESERVE_END_KB', default=0, type=int))
 
-    if env_vars['EXTERNAL_PROG_FLASH_MB'] and not args.bootloader:
+    env_vars['EXT_FLASH_SIZE_MB'] = get_config('EXT_FLASH_SIZE_MB', default=0, type=int)
+
+    if env_vars['EXT_FLASH_SIZE_MB'] and not args.bootloader:
+        f.write('#define CRT1_AREAS_NUMBER 3\n')
         f.write('#define CRT1_RAMFUNC_ENABLE TRUE\n') # this will enable loading program sections to RAM
-        f.write('#define __RAMFUNC__ __attribute__ ((long_call, __section__(".ramfunc")))\n')
-        f.write('#define PORT_IRQ_ATTRIBUTES __RAMFUNC__')
+        f.write('#define __FASTRAMFUNC__ __attribute__ ((__section__(".fastramfunc")))\n')
+        f.write('#define __RAMFUNC__ __attribute__ ((__section__(".ramfunc")))\n')
+        f.write('#define PORT_IRQ_ATTRIBUTES __FASTRAMFUNC__\n')
     else:
+        f.write('#define CRT1_AREAS_NUMBER 1\n')
         f.write('#define CRT1_RAMFUNC_ENABLE FALSE\n')
 
-    storage_flash_page = None
-    if not args.bootloader:
-        if get_config('STORAGE_FLASH_PAGE', default=0, type=int):
-            storage_flash_page = get_config('STORAGE_FLASH_PAGE', type=int)
+    storage_flash_page = get_storage_flash_page()
+    if storage_flash_page is not None:
+        if not args.bootloader:
             f.write('#define STORAGE_FLASH_PAGE %u\n' % storage_flash_page)
+            validate_flash_storage_size()
+        else:
+            # ensure the flash page leaves room for bootloader
+            offset = get_flash_page_offset_kb(storage_flash_page)
 
     if flash_size >= 2048 and not args.bootloader:
         # lets pick a flash sector for Crash log
         f.write('#define HAL_CRASHDUMP_ENABLE 1\n')
         env_vars['ENABLE_CRASHDUMP'] = 1
-        num_flash_pages = get_flash_npages()
-        crash_dump_flash_page = get_config('CRASH_DUMP_FLASHPAGE', default=num_flash_pages-1, type=int)
-        if crash_dump_flash_page >= num_flash_pages:
-            raise Exception("CRASH_DUMP_FLASHPAGE cannot exceed number of available flash pages: %u" % num_flash_pages)
-        if storage_flash_page is not None:
-            while crash_dump_flash_page == storage_flash_page or crash_dump_flash_page == storage_flash_page+1:
-                if crash_dump_flash_page > 0:
-                    crash_dump_flash_page -= 1
-                else:
-                    raise Exception('Unable to find a Crash log flash page')
-        f.write('#define HAL_CRASH_DUMP_FLASHPAGE %u\n' % crash_dump_flash_page)
     else:
         f.write('#define HAL_CRASHDUMP_ENABLE 0\n')
         env_vars['ENABLE_CRASHDUMP'] = 0
 
     if args.bootloader:
-        if env_vars['EXTERNAL_PROG_FLASH_MB']:
-            f.write('#define APP_START_ADDRESS 0x90000000\n')
+        if env_vars['EXT_FLASH_SIZE_MB']:
+            f.write('\n// location of loaded firmware in external flash\n')
+            f.write('#define APP_START_ADDRESS 0x%08x\n' % (0x90000000 + get_config(
+                'EXT_FLASH_RESERVE_START_KB', default=0, type=int)*1024))
             f.write('#define BOOT_FROM_EXT_FLASH 1\n')
         f.write('#define FLASH_BOOTLOADER_LOAD_KB %u\n' % get_config('FLASH_BOOTLOADER_LOAD_KB', type=int))
         f.write('#define FLASH_RESERVE_END_KB %u\n' % get_config('FLASH_RESERVE_END_KB', default=0, type=int))
@@ -886,14 +987,21 @@ def write_mcu_config(f):
     cc_regions = []
     total_memory = 0
     for (address, size, flags) in ram_map:
-        regions.append('{(void*)0x%08x, 0x%08x, 0x%02x }' % (address, size*1024, flags))
         cc_regions.append('{0x%08x, 0x%08x, CRASH_CATCHER_BYTE }' % (address, address + size*1024))
+        if env_vars['APP_RAM_START'] is not None and address == ram_map[env_vars['APP_RAM_START']][0]:
+            ram_reserve_start = get_ram_reserve_start()
+            address += ram_reserve_start
+            size -= ram_reserve_start
+        regions.append('{(void*)0x%08x, 0x%08x, 0x%02x }' % (address, size*1024, flags))
         total_memory += size
     f.write('#define HAL_MEMORY_REGIONS %s\n' % ', '.join(regions))
     f.write('#define HAL_CC_MEMORY_REGIONS %s\n' % ', '.join(cc_regions))
     f.write('#define HAL_MEMORY_TOTAL_KB %u\n' % total_memory)
 
-    f.write('#define HAL_RAM0_START 0x%08x\n' % ram_map[0][0])
+    if env_vars['APP_RAM_START'] is not None:
+        f.write('#define HAL_RAM0_START 0x%08x\n' % ram_map[env_vars['APP_RAM_START']][0])
+    else:
+        f.write('#define HAL_RAM0_START 0x%08x\n' % ram_map[0][0])
     ram_reserve_start = get_ram_reserve_start()
     if ram_reserve_start > 0:
         f.write('#define HAL_RAM_RESERVE_START 0x%08x\n' % ram_reserve_start)
@@ -907,6 +1015,11 @@ def write_mcu_config(f):
 
     f.write('\n// APJ board ID (for bootloaders)\n')
     f.write('#define APJ_BOARD_ID %s\n' % get_config('APJ_BOARD_ID'))
+
+    # support ALT_BOARD_ID for px4 firmware
+    alt_id = get_config('ALT_BOARD_ID', required=False)
+    if alt_id is not None:
+        f.write('#define ALT_BOARD_ID %s\n' % alt_id)
 
     f.write('''
 #ifndef HAL_ENABLE_THREAD_STATISTICS
@@ -938,7 +1051,11 @@ def write_mcu_config(f):
 #endif
 ''')
 
-    if get_mcu_config('EXPECTED_CLOCK'):
+    if get_config('MCU_CLOCKRATE_MHZ', required=False):
+        clockrate = int(get_config('MCU_CLOCKRATE_MHZ'))
+        f.write('#define HAL_CUSTOM_MCU_CLOCKRATE %u\n' % (clockrate * 1000000))
+        f.write('#define HAL_EXPECTED_SYSCLOCK %u\n' % (clockrate * 1000000))
+    elif get_mcu_config('EXPECTED_CLOCK', required=True):
         f.write('#define HAL_EXPECTED_SYSCLOCK %u\n' % get_mcu_config('EXPECTED_CLOCK'))
 
     env_vars['CORTEX'] = cortex
@@ -970,7 +1087,9 @@ def write_mcu_config(f):
 #define HAL_NO_UARTDRIVER
 #define CH_CFG_USE_DYNAMIC FALSE
 #define HAL_USE_EMPTY_STORAGE 1
+#ifndef HAL_STORAGE_SIZE
 #define HAL_STORAGE_SIZE 16384
+#endif
 ''')
         else:
             f.write('''
@@ -983,7 +1102,6 @@ def write_mcu_config(f):
 #define HAL_USE_I2C FALSE
 #define HAL_USE_PWM FALSE
 #define CH_DBG_ENABLE_STACK_CHECK FALSE
-#define CH_CFG_USE_DYNAMIC FALSE
 // avoid timer and RCIN threads to save memory
 #define HAL_NO_TIMER_THREAD
 #define HAL_NO_RCOUT_THREAD
@@ -999,16 +1117,18 @@ def write_mcu_config(f):
 #define CH_CFG_USE_EVENTS FALSE
 #define CH_CFG_USE_EVENTS_TIMEOUT FALSE
 #define HAL_USE_EMPTY_STORAGE 1
+#ifndef HAL_STORAGE_SIZE
 #define HAL_STORAGE_SIZE 16384
+#endif
 #define HAL_USE_RTC FALSE
 #define DISABLE_SERIAL_ESC_COMM TRUE
-#define NO_DATAFLASH TRUE
+#define CH_CFG_USE_DYNAMIC FALSE
 ''')
-        if not env_vars['EXTERNAL_PROG_FLASH_MB']:
+        if not env_vars['EXT_FLASH_SIZE_MB']:
             f.write('''
-#define CH_CFG_USE_HEAP FALSE
-#define CH_CFG_USE_SEMAPHORES FALSE
 #define CH_CFG_USE_MEMCORE FALSE
+#define CH_CFG_USE_SEMAPHORES FALSE
+#define CH_CFG_USE_HEAP FALSE
 ''')
     if env_vars.get('ROMFS_UNCOMPRESSED', False):
         f.write('#define HAL_ROMFS_UNCOMPRESSED\n')
@@ -1026,25 +1146,64 @@ def write_ldscript(fname):
     flash_reserve_start = get_config(
         'FLASH_RESERVE_START_KB', default=16, type=int)
 
+    storage_flash_page = get_storage_flash_page()
+    if storage_flash_page is not None:
+        offset = get_flash_page_offset_kb(storage_flash_page)
+        if offset > flash_reserve_start:
+            # storage is after flash, need to ensure flash doesn't encroach on it
+            flash_size = min(flash_size, offset)
+        else:
+            # storage is before flash, need to ensure storage fits
+            offset2 = get_flash_page_offset_kb(storage_flash_page+2)
+            if flash_reserve_start < offset2:
+                error("Storage overlaps flash")
+
     env_vars['FLASH_RESERVE_START_KB'] = str(flash_reserve_start)
 
     # space to reserve for storage at end of flash
     flash_reserve_end = get_config('FLASH_RESERVE_END_KB', default=0, type=int)
+
+    # space to reserve for bootloader and storage at start of external flash
+    ext_flash_reserve_start = get_config(
+        'EXT_FLASH_RESERVE_START_KB', default=0, type=int)
+    env_vars['EXT_FLASH_RESERVE_START_KB'] = str(ext_flash_reserve_start)
+
+    # space to reserve for storage at end of flash
+    ext_flash_reserve_end = get_config('EXT_FLASH_RESERVE_END_KB', default=0, type=int)
 
     # ram layout
     ram_map = get_ram_map()
     instruction_ram = get_mcu_config('INSTRUCTION_RAM', False)
 
     flash_base = 0x08000000 + flash_reserve_start * 1024
-    ext_flash_base = 0x90000000
+    ext_flash_base = 0x90000000 + ext_flash_reserve_start * 1024
     if instruction_ram is not None:
         instruction_ram_base = instruction_ram[0]
         instruction_ram_length = instruction_ram[1]
 
+    ram1_start = 0
+    ram1_len = 0
+    flash_ram = get_mcu_config('FLASH_RAM', False)
+    if flash_ram is not None:
+        ram1_start = flash_ram[0]
+        ram1_len = flash_ram[1] * 1024
+
+    ram2_start = 0
+    ram2_len = 0
+    data_ram = get_mcu_config('DATA_RAM', False)
+    if data_ram is not None:
+        ram2_start = data_ram[0]
+        ram2_len = data_ram[1] * 1024
+
+    # get external flash if any
+    ext_flash_size = get_config('EXT_FLASH_SIZE_MB', default=0, type=int)
+
     if not args.bootloader:
         flash_length = flash_size - (flash_reserve_start + flash_reserve_end)
+        ext_flash_length = ext_flash_size * 1024 - (ext_flash_reserve_start + ext_flash_reserve_end)
     else:
-        flash_length = get_config('FLASH_BOOTLOADER_LOAD_KB', type=int)
+        flash_length = min(flash_size, get_config('FLASH_BOOTLOADER_LOAD_KB', type=int))
+        ext_flash_length = 0
 
     env_vars['FLASH_TOTAL'] = flash_length * 1024
 
@@ -1052,12 +1211,12 @@ def write_ldscript(fname):
     f = open(fname, 'w')
     ram0_start = ram_map[0][0]
     ram0_len = ram_map[0][1] * 1024
-
-    # possibly reserve some memory for app/bootloader comms
-    ram_reserve_start = get_ram_reserve_start()
-    ram0_start += ram_reserve_start
-    ram0_len -= ram_reserve_start
-    ext_flash_length = get_config('EXTERNAL_PROG_FLASH_MB', default=0, type=int)
+    if env_vars['APP_RAM_START'] is None:
+        # default to start of ram for shared ram
+        # possibly reserve some memory for app/bootloader comms
+        ram_reserve_start = get_ram_reserve_start()
+        ram0_start += ram_reserve_start
+        ram0_len -= ram_reserve_start
     if ext_flash_length == 0 or args.bootloader:
         env_vars['HAS_EXTERNAL_FLASH_SECTIONS'] = 0
         f.write('''/* generated ldscript.ld */
@@ -1070,25 +1229,29 @@ MEMORY
 INCLUDE common.ld
 ''' % (flash_base, flash_length, ram0_start, ram0_len))
     else:
-        if ext_flash_length > 32:
+        if ext_flash_size > 32:
             error("We only support 24bit addressing over external flash")
         env_vars['HAS_EXTERNAL_FLASH_SECTIONS'] = 1
         f.write('''/* generated ldscript.ld */
 MEMORY
 {
-    default_flash : org = 0x%08x, len = %uM
+    default_flash (rx) : org = 0x%08x, len = %uK
     instram : org = 0x%08x, len = %uK
     ram0  : org = 0x%08x, len = %u
+    ram1  : org = 0x%08x, len = %u
+    ram2  : org = 0x%08x, len = %u
 }
 
 INCLUDE common_extf.ld
 ''' % (ext_flash_base, ext_flash_length,
        instruction_ram_base, instruction_ram_length,
-       ram0_start, ram0_len))
+       ram0_start, ram0_len,
+       ram1_start, ram1_len,
+       ram2_start, ram2_len))
 
-def copy_common_linkerscript(outdir, hwdef):
-    dirpath = os.path.dirname(hwdef)
-    if not get_config('EXTERNAL_PROG_FLASH_MB', default=0, type=int) or args.bootloader:
+def copy_common_linkerscript(outdir):
+    dirpath = os.path.dirname(os.path.realpath(__file__))
+    if not get_config('EXT_FLASH_SIZE_MB', default=0, type=int) or args.bootloader:
         shutil.copy(os.path.join(dirpath, "../common/common.ld"),
                     os.path.join(outdir, "common.ld"))
     else:
@@ -1460,7 +1623,7 @@ def write_UART_config(f):
     f.write('\n// UART configuration\n')
 
     # write out driver declarations for HAL_ChibOS_Class.cpp
-    devnames = "ABCDEFGHI"
+    devnames = "ABCDEFGHIJ"
     sdev = 0
     idx = 0
     for dev in uart_list:
@@ -1586,8 +1749,8 @@ def write_UART_config(f):
     num_uarts = len(devlist)
     if 'IOMCU_UART' in config:
         num_uarts -= 1
-    if num_uarts > 9:
-        error("Exceeded max num UARTs of 9 (%u)" % num_uarts)
+    if num_uarts > 10:
+        error("Exceeded max num UARTs of 10 (%u)" % num_uarts)
     f.write('#define HAL_UART_NUM_SERIAL_PORTS %u\n' % num_uarts)
 
 
@@ -1859,7 +2022,7 @@ def write_PWM_config(f, ordered_timers):
            {%s, NULL}, \\
            {%s, NULL}, \\
            {%s, NULL}  \\
-          }, 0, 0}, &PWMD%u, \\
+          }, 0, 0}, &PWMD%u, %u, \\
           HAL_PWM%u_DMA_CONFIG, \\%s
           { %u, %u, %u, %u }, \\
           { %s, %s, %s, %s }}\n''' %
@@ -1867,7 +2030,7 @@ def write_PWM_config(f, ordered_timers):
                  chan_list[0], chan_list[1], chan_list[2], chan_list[3],
                  pwm_clock, period,
                  chan_mode[0], chan_mode[1], chan_mode[2], chan_mode[3],
-                 n, n, hal_icu_cfg,
+                 n, n, n, hal_icu_cfg,
                  alt_functions[0], alt_functions[1], alt_functions[2], alt_functions[3],
                  pal_lines[0], pal_lines[1], pal_lines[2], pal_lines[3]))
     f.write('#define HAL_PWM_GROUPS %s\n\n' % ','.join(groups))
@@ -2080,7 +2243,8 @@ def write_all_lines(hwdat):
 def write_hwdef_header(outfilename):
     '''write hwdef header file'''
     print("Writing hwdef setup in %s" % outfilename)
-    f = open(outfilename, 'w')
+    tmpfile = outfilename + ".tmp"
+    f = open(tmpfile, 'w')
 
     f.write('''/*
  generated hardware definitions from hwdef.dat - DO NOT EDIT
@@ -2233,6 +2397,21 @@ def write_hwdef_header(outfilename):
             for r in dma_required:
                 if fnmatch.fnmatch(d, r):
                     error("Missing required DMA for %s" % d)
+
+    f.close()
+    # see if we ended up with the same file, on an unnecessary reconfigure
+    try:
+        if filecmp.cmp(outfilename, tmpfile):
+            print("No change in hwdef.h")
+            os.unlink(tmpfile)
+            return
+    except Exception:
+        pass
+    try:
+        os.unlink(outfilename)
+    except Exception:
+        pass
+    os.rename(tmpfile, outfilename)
 
 
 def build_peripheral_list():
@@ -2473,6 +2652,8 @@ def process_line(line):
             config.pop(u, '')
             bytype.pop(u, '')
             bylabel.pop(u, '')
+            alttype.pop(u, '')
+            altlabel.pop(u, '')
             # also remove all occurences of defines in previous lines if any
             for line in alllines[:]:
                 if line.startswith('define') and u == line.split()[1]:
@@ -2539,12 +2720,15 @@ def add_apperiph_defaults(f):
 #ifndef HAL_SCHEDULER_ENABLED
 #define HAL_SCHEDULER_ENABLED 0
 #endif
+
 #ifndef HAL_LOGGING_ENABLED
 #define HAL_LOGGING_ENABLED 0
 #endif
+
 #ifndef HAL_GCS_ENABLED
 #define HAL_GCS_ENABLED 0
 #endif
+
 // default to no protocols, AP_Periph enables with params
 #define HAL_SERIAL1_PROTOCOL -1
 #define HAL_SERIAL2_PROTOCOL -1
@@ -2554,22 +2738,44 @@ def add_apperiph_defaults(f):
 #ifndef HAL_LOGGING_MAVLINK_ENABLED
 #define HAL_LOGGING_MAVLINK_ENABLED 0
 #endif
+
 #ifndef HAL_MISSION_ENABLED
 #define HAL_MISSION_ENABLED 0
 #endif
+
 #ifndef HAL_RALLY_ENABLED
 #define HAL_RALLY_ENABLED 0
 #endif
+
 #ifndef HAL_CAN_DEFAULT_NODE_ID
 #define HAL_CAN_DEFAULT_NODE_ID 0
 #endif
+
 #define PERIPH_FW TRUE
 #define HAL_BUILD_AP_PERIPH
+
 #ifndef HAL_WATCHDOG_ENABLED_DEFAULT
 #define HAL_WATCHDOG_ENABLED_DEFAULT true
 #endif
+
+#ifndef AP_FETTEC_ONEWIRE_ENABLED
+#define AP_FETTEC_ONEWIRE_ENABLED 0
+#endif
+
+#ifndef HAL_BARO_WIND_COMP_ENABLED
+#define HAL_BARO_WIND_COMP_ENABLED 0
+#endif
+
+#ifndef HAL_UART_STATS_ENABLED
+#define HAL_UART_STATS_ENABLED (HAL_GCS_ENABLED || HAL_LOGGING_ENABLED)
+#endif
+
+#ifndef AP_AIRSPEED_AUTOCAL_ENABLE
+#define AP_AIRSPEED_AUTOCAL_ENABLE 0
+#endif
+
 ''')
-            
+
 
 # process input file
 for fname in args.hwdef:
@@ -2603,6 +2809,6 @@ write_ROMFS(outdir)
 
 # copy the shared linker script into the build directory; it must
 # exist in the same directory as the ldscript.ld file we generate.
-copy_common_linkerscript(outdir, args.hwdef[0])
+copy_common_linkerscript(outdir)
 
 write_env_py(os.path.join(outdir, "env.py"))

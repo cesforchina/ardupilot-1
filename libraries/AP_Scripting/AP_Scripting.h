@@ -14,11 +14,12 @@
  */
 #pragma once
 
-#ifdef ENABLE_SCRIPTING
+#if AP_SCRIPTING_ENABLED
 
 #include <AP_Common/AP_Common.h>
 #include <AP_Param/AP_Param.h>
-#include <GCS_MAVLink/GCS.h>
+#include <GCS_MAVLink/GCS_MAVLink.h>
+#include <AP_Mission/AP_Mission.h>
 #include <AP_Filesystem/AP_Filesystem.h>
 #include <AP_HAL/I2CDevice.h>
 #include "AP_Scripting_CANSensor.h"
@@ -48,10 +49,10 @@ public:
 
     MAV_RESULT handle_command_int_packet(const mavlink_command_int_t &packet);
 
-    void handle_mission_command(const AP_Mission::Mission_Command& cmd);
+    void handle_mission_command(const class AP_Mission::Mission_Command& cmd);
 
    // User parameters for inputs into scripts 
-   AP_Float _user[4]; 
+   AP_Float _user[6];
 
     struct terminal_s {
         int output_fd;
@@ -97,7 +98,7 @@ private:
     AP_Int8 _enable;
     AP_Int32 _script_vm_exec_count;
     AP_Int32 _script_heap_size;
-    AP_Int8 _debug_level;
+    AP_Int8 _debug_options;
     AP_Int16 _dir_disable;
 
     bool _init_failed;  // true if memory allocation failed
@@ -112,4 +113,4 @@ namespace AP {
     AP_Scripting * scripting(void);
 };
 
-#endif // ENABLE_SCRIPTING
+#endif // AP_SCRIPTING_ENABLED

@@ -14,6 +14,8 @@
  *
  * Code by Andrew Tridgell and Siddharth Bharat Purohit
  */
+
+#include <hal.h>
 #include "GPIO.h"
 
 #include <AP_BoardConfig/AP_BoardConfig.h>
@@ -47,9 +49,6 @@ static struct gpio_entry {
     thread_reference_t thd_wait;
     uint16_t isr_quota;
 } _gpio_tab[] = HAL_GPIO_PINS;
-
-#define NUM_PINS ARRAY_SIZE(_gpio_tab)
-#define PIN_ENABLED(pin) ((pin)<NUM_PINS && _gpio_tab[pin].enabled)
 
 /*
   map a user pin number to a GPIO table entry
