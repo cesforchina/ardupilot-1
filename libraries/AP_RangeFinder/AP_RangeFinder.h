@@ -88,6 +88,7 @@ public:
         GYUS42v2 = 31,
         MSP = 32,
         USD1_CAN = 33,
+        Benewake_CAN = 34,
         SITL = 100,
     };
 
@@ -212,7 +213,7 @@ private:
 
     void detect_instance(uint8_t instance, uint8_t& serial_instance);
 
-    bool _add_backend(AP_RangeFinder_Backend *driver, uint8_t instance);
+    bool _add_backend(AP_RangeFinder_Backend *driver, uint8_t instance, uint8_t serial_instance=0);
 
     uint32_t _log_rfnd_bit = -1;
     void Log_RFND() const;

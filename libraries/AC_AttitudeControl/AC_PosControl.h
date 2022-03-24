@@ -34,7 +34,7 @@
 
 #define POSCONTROL_OVERSPEED_GAIN_Z             2.0f    // gain controlling rate at which z-axis speed is brought back within SPEED_UP and SPEED_DOWN range
 
-#define POSCONTROL_RELAX_TC                     0.16f   // This is used to decay the relevant variable to 5% in half a second.
+#define POSCONTROL_RELAX_TC                     0.16f   // This is used to decay the I term to 5% in half a second.
 
 class AC_PosControl
 {
@@ -187,19 +187,24 @@ public:
     /// input_accel_z - calculate a jerk limited path from the current position, velocity and acceleration to an input acceleration.
     ///     The function takes the current position, velocity, and acceleration and calculates the required jerk limited adjustment to the acceleration for the next time dt.
     ///     The kinematic path is constrained by the maximum acceleration and jerk set using the function set_max_speed_accel_z.
-    virtual void input_accel_z(const float accel);
+    virtual void input_accel_z(float accel);
 
     /// input_vel_accel_z - calculate a jerk limited path from the current position, velocity and acceleration to an input velocity and acceleration.
     ///     The function takes the current position, velocity, and acceleration and calculates the required jerk limited adjustment to the acceleration for the next time dt.
     ///     The kinematic path is constrained by the maximum acceleration and jerk set using the function set_max_speed_accel_z.
     ///     The function alters the vel to be the kinematic path based on accel
     ///     The parameter limit_output specifies if the velocity and acceleration limits are applied to the sum of commanded and correction values or just correction.
-    virtual void input_vel_accel_z(float &vel, const float accel, bool ignore_descent_limit, bool limit_output = true);
+    virtual void input_vel_accel_z(float &vel, float accel, bool ignore_descent_limit, bool limit_output = true);
 
-    /// set_pos_target_z_from_climb_rate_cm - adjusts target up or down using a climb rate in cm/s
+    /// set_pos_target_z_from_climb_rate_cm - adjusts target up or down using a commanded climb rate in cm/s
+    ///     using the default position control kinematic path.
+    ///     The zero target altitude is varied to follow pos_offset_z
+    void set_pos_target_z_from_climb_rate_cm(float vel);
+
+    /// land_at_climb_rate_cm - adjusts target up or down using a commanded climb rate in cm/s
     ///     using the default position control kinematic path.
     ///     ignore_descent_limit turns off output saturation handling to aid in landing detection. ignore_descent_limit should be true unless landing.
-    void set_pos_target_z_from_climb_rate_cm(const float vel, bool ignore_descent_limit);
+    void land_at_climb_rate_cm(float vel, bool ignore_descent_limit);
 
     /// input_pos_vel_accel_z - calculate a jerk limited path from the current position, velocity and acceleration to an input position velocity and acceleration.
     ///     The function takes the current position, velocity, and acceleration and calculates the required jerk limited adjustment to the acceleration for the next time dt.
@@ -209,7 +214,7 @@ public:
 
     /// set_alt_target_with_slew - adjusts target up or down using a commanded altitude in cm
     ///     using the default position control kinematic path.
-    void set_alt_target_with_slew(const float& pos);
+    void set_alt_target_with_slew(float pos);
 
     /// update_pos_offset_z - updates the vertical offsets used by terrain following
     void update_pos_offset_z(float pos_offset);
@@ -295,6 +300,9 @@ public:
 
 
     /// Offset
+
+    /// set_pos_offset_target_z_cm - set altitude offset target in cm above home
+    void set_pos_offset_target_z_cm(float pos_offset_target_z) { _pos_offset_target_z = pos_offset_target_z; }
 
     /// set_pos_offset_z_cm - set altitude offset in cm above home
     void set_pos_offset_z_cm(float pos_offset_z) { _pos_offset_z = pos_offset_z; }
@@ -412,6 +420,9 @@ protected:
     // calculate_yaw_and_rate_yaw - calculate the vehicle yaw and rate of yaw.
     bool calculate_yaw_and_rate_yaw();
 
+    // calculate_overspeed_gain - calculated increased maximum acceleration and jerk if over speed condition is detected
+    float calculate_overspeed_gain();
+
     /// initialise and check for ekf position resets
     void init_ekf_xy_reset();
     void handle_ekf_xy_reset();
@@ -438,13 +449,13 @@ protected:
     float       _dt;                    // time difference (in seconds) between calls from the main program
     uint64_t    _last_update_xy_us;     // system time (in microseconds) since last update_xy_controller call
     uint64_t    _last_update_z_us;      // system time (in microseconds) since last update_z_controller call
-    float       _jerk_xy_max;           // Jerk limit of the xy kinematic path generation in m/s^3 used to determine how quickly the aircraft varies the acceleration target
-    float       _jerk_z_max;            // Jerk limit of the z kinematic path generation in m/s^3 used to determine how quickly the aircraft varies the acceleration target
     float       _vel_max_xy_cms;        // max horizontal speed in cm/s used for kinematic shaping
     float       _vel_max_up_cms;        // max climb rate in cm/s used for kinematic shaping
     float       _vel_max_down_cms;      // max descent rate in cm/s used for kinematic shaping
     float       _accel_max_xy_cmss;     // max horizontal acceleration in cm/s/s used for kinematic shaping
     float       _accel_max_z_cmss;      // max vertical acceleration in cm/s/s used for kinematic shaping
+    float       _jerk_max_xy_cmsss;       // Jerk limit of the xy kinematic path generation in cm/s^3 used to determine how quickly the aircraft varies the acceleration target
+    float       _jerk_max_z_cmsss;        // Jerk limit of the z kinematic path generation in cm/s^3 used to determine how quickly the aircraft varies the acceleration target
     float       _vel_z_control_ratio = 2.0f;    // confidence that we have control in the vertical axis
 
     // output from controller
@@ -461,6 +472,7 @@ protected:
     Vector3f    _accel_target;          // acceleration target in NEU cm/s/s
     Vector3f    _limit_vector;          // the direction that the position controller is limited, zero when not limited
     Vector2f    _vehicle_horiz_vel;     // velocity to use if _flags.vehicle_horiz_vel_override is set
+    float       _pos_offset_target_z;   // vertical position offset target in NEU cm from home
     float       _pos_offset_z;          // vertical position offset in NEU cm from home
     float       _vel_offset_z;          // vertical velocity offset in NEU cm/s calculated by pos_to_rate step
     float       _accel_offset_z;        // vertical acceleration offset in NEU cm/s/s

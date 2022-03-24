@@ -464,16 +464,15 @@ void Mode::make_safe_ground_handling(bool force_throttle_unlimited)
         motors->set_desired_spool_state(AP_Motors::DesiredSpoolState::GROUND_IDLE);
     }
 
-
+    // aircraft is landed, integrator terms must be reset regardless of spool state
+    attitude_control->reset_rate_controller_I_terms_smoothly();
+ 
     switch (motors->get_spool_state()) {
-
     case AP_Motors::SpoolState::SHUT_DOWN:
     case AP_Motors::SpoolState::GROUND_IDLE:
-        // relax controllers during idle states
-        attitude_control->reset_rate_controller_I_terms_smoothly();
+        // reset yaw targets and rates during idle states
         attitude_control->reset_yaw_target_and_rate();
         break;
-
     case AP_Motors::SpoolState::SPOOLING_UP:
     case AP_Motors::SpoolState::THROTTLE_UNLIMITED:
     case AP_Motors::SpoolState::SPOOLING_DOWN:
@@ -549,7 +548,7 @@ void Mode::land_run_vertical_control(bool pause_descent)
     }
 
     // update altitude target and call position controller
-    pos_control->set_pos_target_z_from_climb_rate_cm(cmb_rate, ignore_descent_limit);
+    pos_control->land_at_climb_rate_cm(cmb_rate, ignore_descent_limit);
     pos_control->update_z_controller();
 }
 
