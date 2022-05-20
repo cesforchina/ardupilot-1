@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Copter.h"
+#include <AP_Math/chirp.h>
 class Parameters;
 class ParametersG2;
 
@@ -1470,6 +1471,7 @@ public:
 
     bool init(bool ignore_checks) override;
     void run() override;
+    void exit() override;
 
     bool requires_GPS() const override { return false; }
     bool has_manual_throttle() const override { return true; }
@@ -1481,6 +1483,8 @@ public:
 
     static const struct AP_Param::GroupInfo var_info[];
 
+    Chirp chirp_input;
+
 protected:
 
     const char *name() const override { return "SYSTEMID"; }
@@ -1489,7 +1493,6 @@ protected:
 private:
 
     void log_data() const;
-    float waveform(float time);
 
     enum class AxisType {
         NONE = 0,           // none

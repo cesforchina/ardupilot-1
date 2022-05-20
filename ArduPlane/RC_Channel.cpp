@@ -203,7 +203,7 @@ void RC_Channel_Plane::init_aux_function(const RC_Channel::aux_func_t ch_option,
     }
 }
 
-// do_aux_function - implement the function invoked by auxillary switches
+// do_aux_function - implement the function invoked by auxiliary switches
 bool RC_Channel_Plane::do_aux_function(const aux_func_t ch_option, const AuxSwitchPos ch_flag)
 {
     switch(ch_option) {
@@ -268,6 +268,7 @@ bool RC_Channel_Plane::do_aux_function(const aux_func_t ch_option, const AuxSwit
 
     case AUX_FUNC::FLAP:
     case AUX_FUNC::FBWA_TAILDRAGGER:
+    case AUX_FUNC::AIRBRAKE:
         break; // input labels, nothing to do
 
 #if HAL_QUADPLANE_ENABLED

@@ -485,6 +485,7 @@ void AP_BLHeli::msp_process_command(void)
             // set the output to each motor
             uint8_t nmotors = msp.dataSize / 2;
             debug("MSP_SET_MOTOR %u", nmotors);
+            motors_disabled_mask = SRV_Channels::get_disabled_channel_mask();
             SRV_Channels::set_disabled_channel_mask(0xFFFF);
             motors_disabled = true;
             EXPECT_DELAY_MS(1000);
@@ -946,7 +947,7 @@ void AP_BLHeli::blheli_process_command(void)
         serial_start_ms = 0;
         if (motors_disabled) {
             motors_disabled = false;
-            SRV_Channels::set_disabled_channel_mask(0);            
+            SRV_Channels::set_disabled_channel_mask(motors_disabled_mask);
         }
         if (uart_locked) {
             debug("Unlocked UART");
@@ -1244,7 +1245,7 @@ void AP_BLHeli::run_connection_test(uint8_t chan)
         }
     }
     hal.rcout->serial_end();
-    SRV_Channels::set_disabled_channel_mask(0);
+    SRV_Channels::set_disabled_channel_mask(motors_disabled_mask);
     motors_disabled = false;
     serial_start_ms = 0;
     blheli.chan = saved_chan;
@@ -1277,7 +1278,7 @@ void AP_BLHeli::update(void)
         }
         if (motors_disabled) {
             motors_disabled = false;
-            SRV_Channels::set_disabled_channel_mask(0);
+            SRV_Channels::set_disabled_channel_mask(motors_disabled_mask);
         }
         if (uart != nullptr) {
             debug("Unlocked UART");
@@ -1467,7 +1468,7 @@ void AP_BLHeli::read_telemetry_packet(void)
                 trpm = trpm * 200 / motor_poles;
             }
         }
-        hal.console->printf("ESC[%u] T=%u V=%f C=%f con=%f RPM=%u e=%.1f t=%u\n",
+        DEV_PRINTF("ESC[%u] T=%u V=%f C=%f con=%f RPM=%u e=%.1f t=%u\n",
                             last_telem_esc,
                             t.temperature_cdeg,
                             t.voltage,
@@ -1489,13 +1490,12 @@ void AP_BLHeli::log_bidir_telemetry(void)
         if (has_bidir_dshot(last_telem_esc)) {
             const uint8_t motor_idx = motor_map[last_telem_esc];
             uint16_t trpm = hal.rcout->get_erpm(motor_idx);
-            const float terr = hal.rcout->get_erpm_error_rate(motor_idx);
             if (trpm != 0xFFFF) {    // don't log invalid values as they are never used
                 trpm = trpm * 200 / motor_poles;
             }
 
             last_log_ms[last_telem_esc] = now;
-            hal.console->printf("ESC[%u] RPM=%u e=%.1f t=%u\n", last_telem_esc, trpm, terr, (unsigned)AP_HAL::millis());
+            DEV_PRINTF("ESC[%u] RPM=%u e=%.1f t=%u\n", last_telem_esc, trpm, hal.rcout->get_erpm_error_rate(motor_idx), (unsigned)AP_HAL::millis());
         }
     }
 

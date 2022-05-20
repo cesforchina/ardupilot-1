@@ -19,15 +19,14 @@
 ************************************************************/
 #pragma once
 
-#include <AP_HAL/AP_HAL.h>
-#include <AP_AHRS/AP_AHRS.h>
+#include <AP_HAL/AP_HAL_Boards.h>
 
 #ifndef HAL_MOUNT_ENABLED
 #define HAL_MOUNT_ENABLED !HAL_MINIMIZE_FEATURES
 #endif
 
 #ifndef HAL_SOLO_GIMBAL_ENABLED
-#define HAL_SOLO_GIMBAL_ENABLED HAL_MOUNT_ENABLED && BOARD_FLASH_SIZE > 1024
+#define HAL_SOLO_GIMBAL_ENABLED 0
 #endif
 
 #if HAL_MOUNT_ENABLED

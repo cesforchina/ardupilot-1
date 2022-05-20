@@ -127,7 +127,7 @@ const AP_Param::GroupInfo AP_Baro::var_info[] = {
     // @User: Advanced
     AP_GROUPINFO("_EXT_BUS", 7, AP_Baro, _ext_bus, HAL_BARO_EXTERNAL_BUS_DEFAULT),
 
-    // @Param: _SPEC_GRAV
+    // @Param{Sub}: _SPEC_GRAV
     // @DisplayName: Specific Gravity (For water depth measurement)
     // @Description: This sets the specific gravity of the fluid when flying an underwater ROV.
     // @Values: 1.0:Freshwater,1.024:Saltwater
@@ -851,6 +851,10 @@ void AP_Baro::update(void)
         _alt_offset_active = _alt_offset;
     }
 
+#if HAL_LOGGING_ENABLED
+    bool old_primary_healthy = sensors[_primary].healthy;
+#endif
+
     for (uint8_t i=0; i<_num_drivers; i++) {
         drivers[i]->backend_update(i);
     }
@@ -904,6 +908,16 @@ void AP_Baro::update(void)
 #if HAL_LOGGING_ENABLED
     if (should_log()) {
         Write_Baro();
+    }
+
+#define MASK_LOG_ANY                    0xFFFF
+
+    // log sensor healthy state change:
+    if (sensors[_primary].healthy != old_primary_healthy) {
+        if (AP::logger().should_log(MASK_LOG_ANY)) {
+            const LogErrorCode code = sensors[_primary].healthy ? LogErrorCode::ERROR_RESOLVED : LogErrorCode::UNHEALTHY;
+            AP::logger().Write_Error(LogErrorSubsystem::BARO, code);
+        }
     }
 #endif
 }
