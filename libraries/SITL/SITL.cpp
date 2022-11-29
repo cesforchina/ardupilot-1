@@ -171,12 +171,19 @@ const AP_Param::GroupInfo SIM::var_info2[] = {
 
     AP_GROUPINFO("SAFETY_STATE",    59, SIM,  _safety_switch_state, 0),
 
+    // motor harmonics
+    AP_GROUPINFO("VIB_MOT_HMNC", 60, SIM,  vibe_motor_harmonics, 1),
+
+    // motor mask, allowing external simulators to mark motors
+    AP_GROUPINFO("VIB_MOT_MASK", 5, SIM,  vibe_motor_mask, 0),
+    
     // max motor vibration frequency
     AP_GROUPINFO("VIB_MOT_MAX", 61, SIM,  vibe_motor, 0.0f),
     // minimum throttle for simulated ins noise
     AP_GROUPINFO("INS_THR_MIN", 62, SIM,  ins_noise_throttle_min, 0.1f),
     // amplitude scaling of motor noise relative to gyro/accel noise
     AP_GROUPINFO("VIB_MOT_MULT", 63, SIM,  vibe_motor_scale, 1.0f),
+
 
     AP_GROUPEND
 
@@ -280,6 +287,8 @@ const AP_Param::GroupInfo SIM::var_info3[] = {
     // @User: Advanced
 
     AP_GROUPINFO("ESC_TELEM", 40, SIM, esc_telem, 1),
+
+    AP_GROUPINFO("ESC_ARM_RPM", 41, SIM,  esc_rpm_armed, 0.0f),
 
     AP_SUBGROUPINFO(airspeed[0], "ARSPD_", 50, SIM, SIM::AirspeedParm),
 #if AIRSPEED_MAX_SENSORS > 1
@@ -498,6 +507,11 @@ const AP_Param::GroupInfo SIM::var_ins[] = {
     // @Description: the instance number to  take servos from
     AP_GROUPINFO("JSON_MASTER",     27, SIM, ride_along_master, 0),
 
+    // @Param: OH_MASK
+    // @DisplayName: SIM-on_hardware Output Enable Mask
+    // @Description: channels which are passed through to actual hardware when running on actual hardware
+    AP_GROUPINFO("OH_MASK",     28, SIM, on_hardware_output_enable_mask, 0),
+
     // the IMUT parameters must be last due to the enable parameters
 #if HAL_INS_TEMPERATURE_CAL_ENABLE
     AP_SUBGROUPINFO(imu_tcal[0], "IMUT1_", 61, SIM, AP_InertialSensor::TCal),
@@ -652,7 +666,7 @@ Vector3f SIM::convert_earth_frame(const Matrix3f &dcm, const Vector3f &gyro)
 
 // get the rangefinder reading for the desired rotation, returns -1 for no data
 float SIM::get_rangefinder(uint8_t instance) {
-    if (instance < RANGEFINDER_MAX_INSTANCES) {
+    if (instance < ARRAY_SIZE(state.rangefinder_m)) {
         return state.rangefinder_m[instance];
     }
     return -1;

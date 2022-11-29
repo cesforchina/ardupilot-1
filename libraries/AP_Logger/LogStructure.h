@@ -139,6 +139,7 @@ const struct MultiplierStructure log_Multipliers[] = {
 #include <AP_AIS/LogStructure.h>
 #include <AP_HAL_ChibiOS/LogStructure.h>
 #include <AP_RPM/LogStructure.h>
+#include <AC_Fence/LogStructure.h>
 
 // structure used to define logging format
 // It is packed on ChibiOS to save flash space; however, this causes problems
@@ -205,6 +206,7 @@ struct PACKED log_Parameter {
     uint64_t time_us;
     char name[16];
     float value;
+    float default_value;
 };
 
 struct PACKED log_DSF {
@@ -282,6 +284,15 @@ struct PACKED log_RCOUT {
     uint16_t chan12;
     uint16_t chan13;
     uint16_t chan14;
+};
+
+struct PACKED log_RCOUT2 {
+    LOG_PACKET_HEADER;
+    uint64_t time_us;
+    uint16_t chan15;
+    uint16_t chan16;
+    uint16_t chan17;
+    uint16_t chan18;
 };
 
 struct PACKED log_MAV {
@@ -488,6 +499,7 @@ struct PACKED log_ARSP {
     bool    use;
     bool    healthy;
     float   health_prob;
+    float   test_ratio;
     uint8_t primary;
 };
 
@@ -699,7 +711,7 @@ struct PACKED log_VER {
 #define PID_MULTS  "F----------"
 
 // @LoggerMessage: ADSB
-// @Description: Automatic Dependant Serveillance - Broadcast detected vehicle information
+// @Description: Automatic Dependent Serveillance - Broadcast detected vehicle information
 // @Field: TimeUS: Time since system startup
 // @Field: ICAO_address: Transponder address
 // @Field: Lat: Vehicle latitude
@@ -730,6 +742,7 @@ struct PACKED log_VER {
 // @Field: U: True if sensor is being used
 // @Field: H: True if sensor is healthy
 // @Field: Hp: Probability sensor is healthy
+// @Field: TR: innovation test ratio
 // @Field: Pri: True if sensor is the primary sensor
 
 // @LoggerMessage: CMD
@@ -865,8 +878,8 @@ struct PACKED log_VER {
 // @Field: TimeUS: Time since system startup
 // @Field: TS: target system for command
 // @Field: TC: target component for command
-// @Field: SS: target system for command
-// @Field: SC: target component for command
+// @Field: SS: source system for command
+// @Field: SC: source component for command
 // @Field: Fr: command frame
 // @Field: Cmd: mavlink command enum value
 // @Field: P1: first parameter from mavlink packet
@@ -911,6 +924,7 @@ struct PACKED log_VER {
 // @Field: TimeUS: Time since system startup
 // @Field: Name: parameter name
 // @Field: Value: parameter value
+// @Field: Default: default parameter value for this board and config
 
 // @LoggerMessage: PIDR,PIDP,PIDY,PIDA,PIDS,PIDN,PIDE
 // @Description: Proportional/Integral/Derivative gain values for Roll/Pitch/Yaw/Altitude/Steering
@@ -1001,7 +1015,7 @@ struct PACKED log_VER {
 // @Field: C14: channel 14 input
 
 // @LoggerMessage: RCOU
-// @Description: Servo channel output values
+// @Description: Servo channel output values 1 to 14
 // @Field: TimeUS: Time since system startup
 // @Field: C1: channel 1 output
 // @Field: C2: channel 2 output
@@ -1017,6 +1031,32 @@ struct PACKED log_VER {
 // @Field: C12: channel 12 output
 // @Field: C13: channel 13 output
 // @Field: C14: channel 14 output
+
+// @LoggerMessage: RCO2
+// @Description: Servo channel output values 15 to 18
+// @Field: TimeUS: Time since system startup
+// @Field: C15: channel 15 output
+// @Field: C16: channel 16 output
+// @Field: C17: channel 17 output
+// @Field: C18: channel 18 output
+
+// @LoggerMessage: RCO3
+// @Description: Servo channel output values 19 to 32
+// @Field: TimeUS: Time since system startup
+// @Field: C19: channel 19 output
+// @Field: C20: channel 20 output
+// @Field: C21: channel 21 output
+// @Field: C22: channel 22 output
+// @Field: C23: channel 23 output
+// @Field: C24: channel 24 output
+// @Field: C25: channel 25 output
+// @Field: C26: channel 26 output
+// @Field: C27: channel 27 output
+// @Field: C28: channel 28 output
+// @Field: C29: channel 29 output
+// @Field: C30: channel 30 output
+// @Field: C31: channel 31 output
+// @Field: C32: channel 32 output
 
 // @LoggerMessage: RFND
 // @Description: Rangefinder sensor information
@@ -1155,16 +1195,16 @@ struct PACKED log_VER {
 // @Field: TimeUS: Time since system startup
 // @Field: Name: script name
 // @Field: Runtime: run time
-// @Field: Total_mem: total memory useage
+// @Field: Total_mem: total memory usage of all scripts
 // @Field: Run_mem: run memory usage
 
 // @LoggerMessage: MOTB
 // @Description: Motor mixer information
 // @Field: TimeUS: Time since system startup
 // @Field: LiftMax: Maximum motor compensation gain
-// @Field: BatVolt: Ratio betwen detected battery voltage and maximum battery voltage
+// @Field: BatVolt: Ratio between detected battery voltage and maximum battery voltage
 // @Field: ThLimit: Throttle limit set due to battery current limitations
-// @Field: ThrAvMx: Maximum average throttle that can be used to maintain attitude controll, derived from throttle mix params
+// @Field: ThrAvMx: Maximum average throttle that can be used to maintain attitude control, derived from throttle mix params
 // @Field: FailFlags: bit 0 motor failed, bit 1 motors balanced, should be 2 in normal flight
 
 // messages for all boards
@@ -1178,7 +1218,7 @@ struct PACKED log_VER {
     { LOG_MULT_MSG, sizeof(log_Format_Multiplier), \
       "MULT", "Qbd",      "TimeUS,Id,Mult", "s--","F--" },   \
     { LOG_PARAMETER_MSG, sizeof(log_Parameter), \
-     "PARM", "QNf",        "TimeUS,Name,Value", "s--", "F--"  },       \
+     "PARM", "QNff",        "TimeUS,Name,Value,Default", "s---", "F---"  },       \
 LOG_STRUCTURE_FROM_GPS \
     { LOG_MESSAGE_MSG, sizeof(log_Message), \
       "MSG",  "QZ",     "TimeUS,Message", "s-", "F-"}, \
@@ -1188,6 +1228,10 @@ LOG_STRUCTURE_FROM_GPS \
       "RCI2",  "QHHH",     "TimeUS,C15,C16,OMask", "sYY-", "F---", true }, \
     { LOG_RCOUT_MSG, sizeof(log_RCOUT), \
       "RCOU",  "QHHHHHHHHHHHHHH",     "TimeUS,C1,C2,C3,C4,C5,C6,C7,C8,C9,C10,C11,C12,C13,C14", "sYYYYYYYYYYYYYY", "F--------------", true  }, \
+    { LOG_RCOUT2_MSG, sizeof(log_RCOUT2), \
+      "RCO2",  "QHHHH",     "TimeUS,C15,C16,C17,C18", "sYYYY", "F----", true  }, \
+    { LOG_RCOUT3_MSG, sizeof(log_RCOUT), \
+      "RCO3",  "QHHHHHHHHHHHHHH",     "TimeUS,C19,C20,C21,C22,C23,C24,C25,C26,C27,C28,C29,C30,C31,C32", "sYYYYYYYYYYYYYY", "F--------------", true  }, \
     { LOG_RSSI_MSG, sizeof(log_RSSI), \
       "RSSI",  "Qff",     "TimeUS,RXRSSI,RXLQ", "s--", "F--", true  }, \
 LOG_STRUCTURE_FROM_BARO \
@@ -1201,7 +1245,7 @@ LOG_STRUCTURE_FROM_PRECLAND \
     { LOG_RADIO_MSG, sizeof(log_Radio), \
       "RAD", "QBBBBBHH", "TimeUS,RSSI,RemRSSI,TxBuf,Noise,RemNoise,RxErrors,Fixed", "s-------", "F-------", true }, \
 LOG_STRUCTURE_FROM_CAMERA \
-    { LOG_ARSP_MSG, sizeof(log_ARSP), "ARSP",  "QBffcffBBfB", "TimeUS,I,Airspeed,DiffPress,Temp,RawPress,Offset,U,H,Hp,Pri", "s#nPOPP----", "F-00B00----", true }, \
+    { LOG_ARSP_MSG, sizeof(log_ARSP), "ARSP",  "QBffcffBBffB", "TimeUS,I,Airspeed,DiffPress,Temp,RawPress,Offset,U,H,Hp,TR,Pri", "s#nPOPP-----", "F-00B00-----", true }, \
     LOG_STRUCTURE_FROM_BATTMONITOR \
     { LOG_MAG_MSG, sizeof(log_MAG), \
       "MAG", "QBhhhhhhhhhBI",    "TimeUS,I,MagX,MagY,MagZ,OfsX,OfsY,OfsZ,MOX,MOY,MOZ,Health,S", "s#GGGGGGGGG-s", "F-CCCCCCCCC-F", true }, \
@@ -1249,6 +1293,7 @@ LOG_STRUCTURE_FROM_NAVEKF \
 LOG_STRUCTURE_FROM_AHRS \
 LOG_STRUCTURE_FROM_HAL_CHIBIOS \
 LOG_STRUCTURE_FROM_RPM \
+LOG_STRUCTURE_FROM_FENCE \
     { LOG_DF_FILE_STATS, sizeof(log_DSF), \
       "DSF", "QIHIIII", "TimeUS,Dp,Blk,Bytes,FMn,FMx,FAv", "s--b---", "F--0---" }, \
     { LOG_RALLY_MSG, sizeof(log_Rally), \
@@ -1280,7 +1325,7 @@ LOG_STRUCTURE_FROM_VISUALODOM \
       "STAK", "QBBHHN", "TimeUS,Id,Pri,Total,Free,Name", "s#----", "F-----", true }, \
     { LOG_FILE_MSG, sizeof(log_File), \
       "FILE",   "NIBZ",       "FileName,Offset,Length,Data", "----", "----" }, \
-LOG_STRUCTURE_FROM_AIS, \
+LOG_STRUCTURE_FROM_AIS \
     { LOG_SCRIPTING_MSG, sizeof(log_Scripting), \
       "SCR",   "QNIii", "TimeUS,Name,Runtime,Total_mem,Run_mem", "s-sbb", "F-F--", true }, \
     { LOG_VER_MSG, sizeof(log_VER), \
@@ -1369,6 +1414,9 @@ enum LogMessages : uint8_t {
     LOG_VIDEO_STABILISATION_MSG,
     LOG_MOTBATT_MSG,
     LOG_VER_MSG,
+    LOG_RCOUT2_MSG,
+    LOG_RCOUT3_MSG,
+    LOG_IDS_FROM_FENCE,
 
     _LOG_LAST_MSG_
 };

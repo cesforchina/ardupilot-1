@@ -17,11 +17,6 @@
 #pragma once
 
 #include <AP_HAL/AP_HAL.h>
-#include <AP_Vehicle/AP_Vehicle_Type.h>
-
-#ifndef HAL_GYROFFT_ENABLED
-#define HAL_GYROFFT_ENABLED HAL_WITH_DSP
-#endif
 
 #if HAL_GYROFFT_ENABLED
 
@@ -44,8 +39,7 @@ public:
     AP_GyroFFT();
 
     // Do not allow copies
-    AP_GyroFFT(const AP_GyroFFT &other) = delete;
-    AP_GyroFFT &operator=(const AP_GyroFFT&) = delete;
+    CLASS_NO_COPY(AP_GyroFFT);
 
     void init(uint16_t loop_rate_hz);
 
@@ -56,7 +50,7 @@ public:
     // update the engine state - runs at 400Hz
     void update();
     // update calculated values of dynamic parameters - runs at 1Hz
-    void update_parameters();
+    void update_parameters() { update_parameters(false); }
     // thread for processing gyro data via FFT
     void update_thread();
     // start the update thread
@@ -211,6 +205,7 @@ private:
     uint16_t get_available_samples(uint8_t axis) {
         return _sample_mode == 0 ?_ins->get_raw_gyro_window(axis).available() : _downsampled_gyro_data[axis].available();
     }
+    void update_parameters(bool force);
     // semaphore for access to shared FFT data
     HAL_Semaphore _sem;
 
@@ -340,6 +335,8 @@ private:
     AP_Int8 _harmonic_fit;
     // harmonic peak target
     AP_Int8 _harmonic_peak;
+    // number of output frames to retain for averaging
+    AP_Int8 _num_frames;
     AP_InertialSensor* _ins;
 #if DEBUG_FFT
     uint32_t _last_output_ms;

@@ -348,15 +348,14 @@ float rand_float(void)
 #endif
 }
 
+// generate a random Vector3f with each value between -1.0 and 1.0
 Vector3f rand_vec3f(void)
 {
-    Vector3f v = Vector3f(rand_float(),
-                          rand_float(),
-                          rand_float());
-    if (!is_zero(v.length())) {
-        v.normalize();
-    }
-    return v;
+    return Vector3f{
+        rand_float(),
+        rand_float(),
+        rand_float()
+    };
 }
 #endif
 
@@ -404,7 +403,7 @@ float calc_lowpass_alpha_dt(float dt, float cutoff_freq)
         return 1.0;
     }
     float rc = 1.0f/(M_2PI*cutoff_freq);
-    return constrain_float(dt/(dt+rc), 0.0f, 1.0f);
+    return dt/(dt+rc);
 }
 
 #ifndef AP_MATH_FILL_NANF_USE_MEMCPY
@@ -486,4 +485,37 @@ float fixedwing_turn_rate(float bank_angle_deg, float airspeed)
 float degF_to_Kelvin(float temp_f)
 {
     return (temp_f + 459.67) * 0.55556;
+}
+
+/*
+  conversion functions to prevent undefined behaviour
+ */
+int16_t float_to_int16(const float v)
+{
+    return int16_t(constrain_float(v, INT16_MIN, INT16_MAX));
+}
+
+int32_t float_to_int32(const float v)
+{
+    return int32_t(constrain_float(v, INT32_MIN, INT32_MAX));
+}
+
+uint16_t float_to_uint16(const float v)
+{
+    return uint16_t(constrain_float(v, 0, UINT16_MAX));
+}
+
+uint32_t float_to_uint32(const float v)
+{
+    return uint32_t(constrain_float(v, 0, UINT32_MAX));
+}
+
+uint32_t double_to_uint32(const double v)
+{
+    return uint32_t(constrain_double(v, 0, UINT32_MAX));
+}
+
+int32_t double_to_int32(const double v)
+{
+    return int32_t(constrain_double(v, INT32_MIN, UINT32_MAX));
 }

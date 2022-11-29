@@ -16,9 +16,9 @@
  *   AP_Airspeed.cpp - airspeed (pitot) driver
  */
 
-#include <AP_Vehicle/AP_Vehicle_Type.h>
-
 #include "AP_Airspeed.h"
+
+#include <AP_Vehicle/AP_Vehicle_Type.h>
 
 // Dummy the AP_Airspeed class to allow building Airspeed only for plane, rover, sub, and copter & heli 2MB boards
 // This could be removed once the build system allows for APM_BUILD_TYPE in header files
@@ -37,7 +37,6 @@
 #include <SRV_Channel/SRV_Channel.h>
 #include <AP_Logger/AP_Logger.h>
 #include <utility>
-#include <AP_Vehicle/AP_Vehicle.h>
 #include "AP_Airspeed_MS4525.h"
 #include "AP_Airspeed_MS5525.h"
 #include "AP_Airspeed_SDP3X.h"
@@ -48,6 +47,7 @@
 #include "AP_Airspeed_UAVCAN.h"
 #include "AP_Airspeed_NMEA.h"
 #include "AP_Airspeed_MSP.h"
+#include "AP_Airspeed_SITL.h"
 extern const AP_HAL::HAL &hal;
 
 #ifdef HAL_AIRSPEED_TYPE_DEFAULT
@@ -86,7 +86,7 @@ extern const AP_HAL::HAL &hal;
 #define PSI_RANGE_DEFAULT 1.0f
 #endif
 
-#define OPTIONS_DEFAULT AP_Airspeed::OptionsMask::ON_FAILURE_AHRS_WIND_MAX_DO_DISABLE | AP_Airspeed::OptionsMask::ON_FAILURE_AHRS_WIND_MAX_RECOVERY_DO_REENABLE
+#define OPTIONS_DEFAULT AP_Airspeed::OptionsMask::ON_FAILURE_AHRS_WIND_MAX_DO_DISABLE | AP_Airspeed::OptionsMask::ON_FAILURE_AHRS_WIND_MAX_RECOVERY_DO_REENABLE | AP_Airspeed::OptionsMask::USE_EKF_CONSISTENCY
 
 // table of user settable parameters
 const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
@@ -94,7 +94,7 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
     // @Param: _TYPE
     // @DisplayName: Airspeed type
     // @Description: Type of airspeed sensor
-    // @Values: 0:None,1:I2C-MS4525D0,2:Analog,3:I2C-MS5525,4:I2C-MS5525 (0x76),5:I2C-MS5525 (0x77),6:I2C-SDP3X,7:I2C-DLVR-5in,8:DroneCAN,9:I2C-DLVR-10in,10:I2C-DLVR-20in,11:I2C-DLVR-30in,12:I2C-DLVR-60in,13:NMEA water speed,14:MSP,15:ASP5033
+    // @Values: 0:None,1:I2C-MS4525D0,2:Analog,3:I2C-MS5525,4:I2C-MS5525 (0x76),5:I2C-MS5525 (0x77),6:I2C-SDP3X,7:I2C-DLVR-5in,8:DroneCAN,9:I2C-DLVR-10in,10:I2C-DLVR-20in,11:I2C-DLVR-30in,12:I2C-DLVR-60in,13:NMEA water speed,14:MSP,15:ASP5033,100:SITL
     // @User: Standard
     AP_GROUPINFO_FLAGS("_TYPE", 0, AP_Airspeed, param[0].type, ARSPD_DEFAULT_TYPE, AP_PARAM_FLAG_ENABLE),     // NOTE: Index 0 is actually used as index 63 here
 
@@ -108,7 +108,7 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
 #ifndef HAL_BUILD_AP_PERIPH
     // @Param: _USE
     // @DisplayName: Airspeed use
-    // @Description{Plane}: Enables airspeed use for automatic throttle modes and replaces control from THR_TRIM. Continues to display and log airspeed if set to 0. Uses airspeed for control if set to 1. Only uses airspeed when throttle = 0 if set to 2 (useful for gliders with airspeed sensors behind propellers).
+    // @Description: Enables airspeed use for automatic throttle modes and replaces control from THR_TRIM. Continues to display and log airspeed if set to 0. Uses airspeed for control if set to 1. Only uses airspeed when throttle = 0 if set to 2 (useful for gliders with airspeed sensors behind propellers).
     // @Description{Copter, Blimp, Rover, Sub}: This parameter is not used by this vehicle. Always set to 0.
     // @Values: 0:DoNotUse,1:Use,2:UseWhenZeroThrottle
     // @User: Standard
@@ -137,8 +137,8 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
 
 #if AP_AIRSPEED_AUTOCAL_ENABLE
     // @Param: _AUTOCAL
-    // @DisplayName{Plane}: Automatic airspeed ratio calibration
-    // @Description{Copter, Blimp, Rover, Sub}: This parameter and function is not used by this vehicle. Always set to 0.
+    // @DisplayName: Automatic airspeed ratio calibration
+    // @DisplayName{Copter, Blimp, Rover, Sub}: This parameter and function is not used by this vehicle. Always set to 0.
     // @Description: Enables automatic adjustment of ARSPD_RATIO during a calibration flight based on estimation of ground speed and true airspeed. New ratio saved every 2 minutes if change is > 5%. Should not be left enabled.
     // @User: Advanced
     AP_GROUPINFO("_AUTOCAL",  5, AP_Airspeed, param[0].autocal, 0),
@@ -162,15 +162,16 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
 
     // @Param: _PSI_RANGE
     // @DisplayName: The PSI range of the device
-    // @Description: This parameter allows you to to set the PSI (pounds per square inch) range for your sensor. You should not change this unless you examine the datasheet for your device
+    // @Description: This parameter allows you to set the PSI (pounds per square inch) range for your sensor. You should not change this unless you examine the datasheet for your device
     // @User: Advanced
     AP_GROUPINFO("_PSI_RANGE",  8, AP_Airspeed, param[0].psi_range, PSI_RANGE_DEFAULT),
 
 #ifndef HAL_BUILD_AP_PERIPH
     // @Param: _BUS
     // @DisplayName: Airspeed I2C bus
-    // @Description: Bus number of the I2C bus where the airspeed sensor is connected
-    // @Values: 0:Bus0(internal),1:Bus1(external),2:Bus2(auxiliary)
+    // @Description: Bus number of the I2C bus where the airspeed sensor is connected. May not correspond to board's I2C bus number labels. Retry another bus and reboot if airspeed sensor fails to initialize.
+    // @Values: 0:Bus0,1:Bus1,2:Bus2
+    // @RebootRequired: True
     // @User: Advanced
     AP_GROUPINFO("_BUS",  9, AP_Airspeed, param[0].bus, HAL_AIRSPEED_BUS_DEFAULT),
 #endif // HAL_BUILD_AP_PERIPH
@@ -187,9 +188,9 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
 #ifndef HAL_BUILD_AP_PERIPH
     // @Param: _OPTIONS
     // @DisplayName: Airspeed options bitmask
-    // @Description{Plane}: Bitmask of options to use with airspeed. 0:Disable use based on airspeed/groundspeed mismatch (see ARSPD_WIND_MAX), 1:Automatically reenable use based on airspeed/groundspeed mismatch recovery (see ARSPD_WIND_MAX) 2:Disable voltage correction
+    // @Description: Bitmask of options to use with airspeed. 0:Disable use based on airspeed/groundspeed mismatch (see ARSPD_WIND_MAX), 1:Automatically reenable use based on airspeed/groundspeed mismatch recovery (see ARSPD_WIND_MAX) 2:Disable voltage correction, 3:Check that the airspeed is statistically consistent with the navigation EKF vehicle and wind velocity estimates using EKF3 (requires AHRS_EKF_TYPE = 3)
     // @Description{Copter, Blimp, Rover, Sub}: This parameter and function is not used by this vehicle. Always set to 0.
-    // @Bitmask: 0:SpeedMismatchDisable, 1:AllowSpeedMismatchRecovery, 2:DisableVoltageCorrection
+    // @Bitmask: 0:SpeedMismatchDisable, 1:AllowSpeedMismatchRecovery, 2:DisableVoltageCorrection, 3:UseEkf3Consistency
     // @User: Advanced
     AP_GROUPINFO("_OPTIONS", 21, AP_Airspeed, _options, OPTIONS_DEFAULT),
 
@@ -208,6 +209,15 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
     // @Units: m/s
     // @User: Advanced
     AP_GROUPINFO("_WIND_WARN", 23, AP_Airspeed, _wind_warn, 0),
+
+    // @Param: _WIND_GATE
+    // @DisplayName: Re-enable Consistency Check Gate Size
+    // @Description: Number of standard deviations applied to the re-enable EKF consistency check that is used when ARSPD_OPTIONS bit position 3 is set. Larger values will make the re-enabling of the airspeed sensor faster, but increase the likelihood of re-enabling a degraded sensor. The value can be tuned by using the ARSP.TR log message by setting ARSP_WIND_GATE to a value that is higher than the value for ARSP.TR observed with a healthy airspeed sensor. Occasional transients in ARSP.TR above the value set by ARSP_WIND_GATE can be tolerated provided they are less than 5 seconds in duration and less than 10% duty cycle.
+    // @Description{Copter, Blimp, Rover, Sub}: This parameter and function is not used by this vehicle.
+    // @Range: 0.0 10.0
+    // @User: Advanced
+    AP_GROUPINFO("_WIND_GATE", 26, AP_Airspeed, _wind_gate, 5.0f),
+
 #endif
 
 #if AIRSPEED_MAX_SENSORS > 1
@@ -220,7 +230,7 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
 
     // @Param: 2_USE
     // @DisplayName: Enable use of 2nd airspeed sensor
-    // @Description{Plane}: use airspeed for flight control. When set to 0 airspeed sensor can be logged and displayed on a GCS but won't be used for flight. When set to 1 it will be logged and used. When set to 2 it will be only used when the throttle is zero, which can be useful in gliders with airspeed sensors behind a propeller
+    // @Description: use airspeed for flight control. When set to 0 airspeed sensor can be logged and displayed on a GCS but won't be used for flight. When set to 1 it will be logged and used. When set to 2 it will be only used when the throttle is zero, which can be useful in gliders with airspeed sensors behind a propeller
     // @Description{Copter, Blimp, Rover, Sub}: This parameter and function is not used by this vehicle. Always set to 0.
     // @Values: 0:Don't Use,1:use,2:UseWhenZeroThrottle
     // @User: Standard
@@ -248,7 +258,7 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
 
     // @Param: 2_AUTOCAL
     // @DisplayName: Automatic airspeed ratio calibration for 2nd airspeed sensor
-    // @Description{Plane}: If this is enabled then the autopilot will automatically adjust the ARSPD_RATIO during flight, based upon an estimation filter using ground speed and true airspeed. The automatic calibration will save the new ratio to EEPROM every 2 minutes if it changes by more than 5%. This option should be enabled for a calibration flight then disabled again when calibration is complete. Leaving it enabled all the time is not recommended.
+    // @Description: If this is enabled then the autopilot will automatically adjust the ARSPD_RATIO during flight, based upon an estimation filter using ground speed and true airspeed. The automatic calibration will save the new ratio to EEPROM every 2 minutes if it changes by more than 5%. This option should be enabled for a calibration flight then disabled again when calibration is complete. Leaving it enabled all the time is not recommended.
     // @Description{Copter, Blimp, Rover, Sub}: This parameter and function is not used by this vehicle. Always set to 0.
     // @User: Advanced
     AP_GROUPINFO("2_AUTOCAL",  16, AP_Airspeed, param[1].autocal, 0),
@@ -269,14 +279,15 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
 
     // @Param: 2_PSI_RANGE
     // @DisplayName: The PSI range of the device for 2nd sensor
-    // @Description: This parameter allows you to to set the PSI (pounds per square inch) range for your sensor. You should not change this unless you examine the datasheet for your device
+    // @Description: This parameter allows you to set the PSI (pounds per square inch) range for your sensor. You should not change this unless you examine the datasheet for your device
     // @User: Advanced
     AP_GROUPINFO("2_PSI_RANGE",  19, AP_Airspeed, param[1].psi_range, PSI_RANGE_DEFAULT),
 
     // @Param: 2_BUS
     // @DisplayName: Airspeed I2C bus for 2nd sensor
-    // @Description: The bus number of the I2C bus to look for the sensor on
-    // @Values: 0:Bus0(internal),1:Bus1(external),2:Bus2(auxiliary)
+    // @Description: Bus number of the I2C bus where the airspeed sensor is connected. May not correspond to board's I2C bus number labels. Retry another bus and reboot if airspeed sensor fails to initialize.
+    // @Values: 0:Bus0,1:Bus1,2:Bus2
+    // @RebootRequired: True
     // @User: Advanced
     AP_GROUPINFO("2_BUS",  20, AP_Airspeed, param[1].bus, 1),
 
@@ -291,7 +302,7 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
     
 #endif // AIRSPEED_MAX_SENSORS
 
-    // Note that 21, 22 and 23 are used above by the _OPTIONS, _WIND_MAX and _WIND_WARN parameters.  Do not use them!!
+    // Note that 21, 22, 23, 24, 25 and 26 are used above by the _OPTIONS, _DEVID, __WIND_MAX, _WIND_WARN and _WIND_GATE parameters.  Do not use them!!
 
     // NOTE: Index 63 is used by AIRSPEED_TYPE, Do not use it!: AP_Param converts an index of 0 to 63 so that the index may be bit shifted
     AP_GROUPEND
@@ -392,6 +403,11 @@ void AP_Airspeed::init()
             sensor[i] = new AP_Airspeed_MS4525(*this, i);
 #endif
             break;
+        case TYPE_SITL:
+#if AP_AIRSPEED_SITL_ENABLED
+            sensor[i] = new AP_Airspeed_SITL(*this, i);
+#endif
+            break;
         case TYPE_ANALOG:
 #if AP_AIRSPEED_ANALOG_ENABLED
             sensor[i] = new AP_Airspeed_Analog(*this, i);
@@ -449,7 +465,7 @@ void AP_Airspeed::init()
             break;
         case TYPE_UAVCAN:
 #if AP_AIRSPEED_UAVCAN_ENABLED
-            sensor[i] = AP_Airspeed_UAVCAN::probe(*this, i);
+            sensor[i] = AP_Airspeed_UAVCAN::probe(*this, i, uint32_t(param[i].bus_id.get()));
 #endif
             break;
         case TYPE_NMEA_WATER:
@@ -474,7 +490,30 @@ void AP_Airspeed::init()
             num_sensors = i+1;
         }
     }
+
+#if AP_AIRSPEED_UAVCAN_ENABLED
+    // we need a 2nd pass for DroneCAN sensors so we can match order by DEVID
+    // the 2nd pass accepts any devid
+    for (uint8_t i=0; i<AIRSPEED_MAX_SENSORS; i++) {
+        if (sensor[i] == nullptr && (enum airspeed_type)param[i].type.get() == TYPE_UAVCAN) {
+            sensor[i] = AP_Airspeed_UAVCAN::probe(*this, i, 0);
+            if (sensor[i] != nullptr) {
+                num_sensors = i+1;
+            }
+        }
+    }
+#endif // AP_AIRSPEED_UAVCAN_ENABLED
 #endif // HAL_AIRSPEED_PROBE_LIST
+
+    // set DEVID to zero for any sensors not found. This allows backends to order
+    // based on previous value of DEVID. This allows for swapping out sensors
+    for (uint8_t i=0; i<AIRSPEED_MAX_SENSORS; i++) {
+        if (sensor[i] == nullptr) {
+            // note we use set() not set_and_save() to allow a sensor to be temporarily
+            // removed for one boot without losing its slot
+            param[i].bus_id.set(0);
+        }
+    }
 }
 
 // read the airspeed sensor
@@ -684,11 +723,18 @@ void AP_Airspeed::handle_msp(const MSP::msp_airspeed_data_message_t &pkt)
 }
 #endif 
 
+// @LoggerMessage: HYGR
+// @Description: Hygrometer data
+// @Field: TimeUS: Time since system startup
+// @Field: Id: sensor ID
+// @Field: Humidity: percentage humidity
+// @Field: Temp: temperature in degrees C
+
 void AP_Airspeed::Log_Airspeed()
 {
     const uint64_t now = AP_HAL::micros64();
     for (uint8_t i=0; i<AIRSPEED_MAX_SENSORS; i++) {
-        if (!enabled(i)) {
+        if (!enabled(i) || sensor[i] == nullptr) {
             continue;
         }
         float temperature;
@@ -707,9 +753,31 @@ void AP_Airspeed::Log_Airspeed()
             use           : use(i),
             healthy       : healthy(i),
             health_prob   : get_health_probability(i),
+            test_ratio    : get_test_ratio(i),
             primary       : get_primary()
         };
         AP::logger().WriteBlock(&pkt, sizeof(pkt));
+
+#if AP_AIRSPEED_HYGROMETER_ENABLE
+        struct {
+            uint32_t sample_ms;
+            float temperature;
+            float humidity;
+        } hygrometer;
+        if (sensor[i]->get_hygrometer(hygrometer.sample_ms, hygrometer.temperature, hygrometer.humidity) &&
+            hygrometer.sample_ms != state[i].last_hygrometer_log_ms) {
+            AP::logger().WriteStreaming("HYGR",
+                                        "TimeUS,Id,Humidity,Temp",
+                                        "s#%O",
+                                        "F---",
+                                        "QBff",
+                                        AP_HAL::micros64(),
+                                        i,
+                                        hygrometer.humidity,
+                                        hygrometer.temperature);
+            state[i].last_hygrometer_log_ms = hygrometer.sample_ms;
+        }
+#endif
     }
 }
 
@@ -796,6 +864,16 @@ float AP_Airspeed::get_corrected_pressure(uint8_t i) const {
     }
     return state[i].corrected_pressure;
 }
+
+#if AP_AIRSPEED_HYGROMETER_ENABLE
+bool AP_Airspeed::get_hygrometer(uint8_t i, uint32_t &last_sample_ms, float &temperature, float &humidity) const
+{
+    if (!enabled(i) || sensor[i] == nullptr) {
+        return false;
+    }
+    return sensor[i]->get_hygrometer(last_sample_ms, temperature, humidity);
+}
+#endif // AP_AIRSPEED_HYGROMETER_ENABLE
 
 #else  // build type is not appropriate; provide a dummy implementation:
 const AP_Param::GroupInfo AP_Airspeed::var_info[] = { AP_GROUPEND };

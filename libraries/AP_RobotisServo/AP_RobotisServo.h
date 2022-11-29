@@ -21,7 +21,7 @@
 #include <AP_HAL/AP_HAL_Boards.h>
 
 #ifndef AP_ROBOTISSERVO_ENABLED
-#define AP_ROBOTISSERVO_ENABLED 1
+#define AP_ROBOTISSERVO_ENABLED (!HAL_MINIMIZE_FEATURES && BOARD_FLASH_SIZE > 1024)
 #endif
 
 #if AP_ROBOTISSERVO_ENABLED
@@ -34,8 +34,7 @@ public:
     AP_RobotisServo();
 
     /* Do not allow copies */
-    AP_RobotisServo(const AP_RobotisServo &other) = delete;
-    AP_RobotisServo &operator=(const AP_RobotisServo&) = delete;
+    CLASS_NO_COPY(AP_RobotisServo);
 
     static const struct AP_Param::GroupInfo var_info[];
     
@@ -58,7 +57,7 @@ private:
     void configure_servos(void);
 
     // auto-detected mask of available servos, from a broadcast ping
-    uint16_t servo_mask;
+    uint32_t servo_mask;
     uint8_t detection_count;
     uint8_t configured_servos;
     bool initialised;

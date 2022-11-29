@@ -1,14 +1,19 @@
 #include "AP_Logger.h"
 
+#if HAL_LOGGING_ENABLED
+
 #include "AP_Logger_Backend.h"
 
 #include "AP_Logger_File.h"
 #include "AP_Logger_DataFlash.h"
+#include "AP_Logger_W25N01GV.h"
 #include "AP_Logger_MAVLink.h"
 
 #include <AP_InternalError/AP_InternalError.h>
 #include <GCS_MAVLink/GCS.h>
 #include <AP_BoardConfig/AP_BoardConfig.h>
+#include <AP_Rally/AP_Rally.h>
+#include <AP_Vehicle/AP_Vehicle_Type.h>
 
 AP_Logger *AP_Logger::_singleton;
 
@@ -24,6 +29,10 @@ extern const AP_HAL::HAL& hal;
 #else
 #define HAL_LOGGING_FILE_BUFSIZE  16
 #endif
+#endif
+
+#ifndef HAL_LOGGING_DATAFLASH_DRIVER
+#define HAL_LOGGING_DATAFLASH_DRIVER AP_Logger_DataFlash
 #endif
 
 #ifndef HAL_LOGGING_STACK_SIZE
@@ -56,6 +65,14 @@ extern const AP_HAL::HAL& hal;
 #  define HAL_LOGGING_BACKENDS_DEFAULT 0
 # endif
 #endif
+
+// when adding new msgs we start at a different index in replay
+#if APM_BUILD_TYPE(APM_BUILD_Replay)
+#define LOGGING_FIRST_DYNAMIC_MSGID REPLAY_LOG_NEW_MSG_MAX
+#else
+#define LOGGING_FIRST_DYNAMIC_MSGID 254
+#endif
+
 
 const AP_Param::GroupInfo AP_Logger::var_info[] = {
     // @Param: _BACKEND_TYPE
@@ -121,6 +138,7 @@ const AP_Param::GroupInfo AP_Logger::var_info[] = {
     // @Description: This sets the maximum rate that streaming log messages will be logged to the file backend. A value of zero means that rate limiting is disabled.
     // @Units: Hz
     // @Range: 0 1000
+    // @Increment: 0.1
     // @User: Standard
     AP_GROUPINFO("_FILE_RATEMAX",  8, AP_Logger, _params.file_ratemax, 0),
 
@@ -130,6 +148,7 @@ const AP_Param::GroupInfo AP_Logger::var_info[] = {
     // @Description: This sets the maximum rate that streaming log messages will be logged to the mavlink backend. A value of zero means that rate limiting is disabled.
     // @Units: Hz
     // @Range: 0 1000
+    // @Increment: 0.1
     // @User: Standard
     AP_GROUPINFO("_MAV_RATEMAX",  9, AP_Logger, _params.mav_ratemax, 0),
 #endif
@@ -140,6 +159,7 @@ const AP_Param::GroupInfo AP_Logger::var_info[] = {
     // @Description: This sets the maximum rate that streaming log messages will be logged to the mavlink backend. A value of zero means that rate limiting is disabled.
     // @Units: Hz
     // @Range: 0 1000
+    // @Increment: 0.1
     // @User: Standard
     AP_GROUPINFO("_BLK_RATEMAX", 10, AP_Logger, _params.blk_ratemax, 0),
 #endif
@@ -186,7 +206,7 @@ void AP_Logger::Init(const struct LogStructure *structures, uint8_t num_types)
         { Backend_Type::FILESYSTEM, AP_Logger_File::probe },
 #endif
 #if HAL_LOGGING_DATAFLASH_ENABLED
-        { Backend_Type::BLOCK, AP_Logger_DataFlash::probe },
+        { Backend_Type::BLOCK, HAL_LOGGING_DATAFLASH_DRIVER::probe },
 #endif
 #if HAL_LOGGING_MAVLINK_ENABLED
         { Backend_Type::MAVLINK, AP_Logger_MAVLink::probe },
@@ -204,7 +224,7 @@ void AP_Logger::Init(const struct LogStructure *structures, uint8_t num_types)
         LoggerMessageWriter_DFLogStart *message_writer =
             new LoggerMessageWriter_DFLogStart();
         if (message_writer == nullptr)  {
-            AP_BoardConfig::allocation_error("mesage writer");
+            AP_BoardConfig::allocation_error("message writer");
         }
         backends[_next_backend] = backend_config.probe_fn(*this, message_writer);
         if (backends[_next_backend] == nullptr) {
@@ -849,7 +869,7 @@ void AP_Logger::Write_Mode(uint8_t mode, const ModeReason reason)
 
 void AP_Logger::Write_Parameter(const char *name, float value)
 {
-    FOR_EACH_BACKEND(Write_Parameter(name, value));
+    FOR_EACH_BACKEND(Write_Parameter(name, value, quiet_nanf()));
 }
 
 void AP_Logger::Write_Mission_Cmd(const AP_Mission &mission,
@@ -869,6 +889,13 @@ void AP_Logger::Write_RallyPoint(uint8_t total,
 void AP_Logger::Write_Rally()
 {
     FOR_EACH_BACKEND(Write_Rally());
+}
+#endif
+
+#if HAL_LOGGER_FENCE_ENABLED
+void AP_Logger::Write_Fence()
+{
+    FOR_EACH_BACKEND(Write_Fence());
 }
 #endif
 
@@ -1049,7 +1076,7 @@ bool AP_Logger::assert_same_fmt_for_name(const AP_Logger::log_write_fmt *f,
 }
 #endif
 
-AP_Logger::log_write_fmt *AP_Logger::msg_fmt_for_name(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, const bool direct_comp)
+AP_Logger::log_write_fmt *AP_Logger::msg_fmt_for_name(const char *name, const char *labels, const char *units, const char *mults, const char *fmt, const bool direct_comp, const bool copy_strings)
 {
     WITH_SEMAPHORE(log_write_fmts_sem);
     struct log_write_fmt *f;
@@ -1078,12 +1105,6 @@ AP_Logger::log_write_fmt *AP_Logger::msg_fmt_for_name(const char *name, const ch
         }
     }
 
-#if APM_BUILD_TYPE(APM_BUILD_Replay)
-    // don't allow for new msg types during replay. We will be able to
-    // support these eventually, but for now they cause corruption
-    return nullptr;
-#endif
-
     f = (struct log_write_fmt *)calloc(1, sizeof(*f));
     if (f == nullptr) {
         // out of memory
@@ -1096,11 +1117,40 @@ AP_Logger::log_write_fmt *AP_Logger::msg_fmt_for_name(const char *name, const ch
         return nullptr;
     }
     f->msg_type = msg_type;
-    f->name = name;
-    f->fmt = fmt;
-    f->labels = labels;
-    f->units = units;
-    f->mults = mults;
+
+    if (copy_strings) {
+        // cannot use pointers to memory that might move, must allocate and copy
+        struct log_write_fmt_strings *ls_copy = (struct log_write_fmt_strings*)malloc(sizeof(log_write_fmt_strings));
+        if (ls_copy == nullptr) {
+            free(f);
+            return nullptr;
+        }
+
+        strncpy_noterm(ls_copy->name, name, sizeof(ls_copy->name));
+        strncpy_noterm(ls_copy->format, fmt, sizeof(ls_copy->format));
+        strncpy_noterm(ls_copy->labels, labels, sizeof(ls_copy->labels));
+
+        f->name = ls_copy->name;
+        f->fmt = ls_copy->format;
+        f->labels = ls_copy->labels;
+
+        if (units != nullptr) {
+            strncpy_noterm(ls_copy->units, units, sizeof(ls_copy->units));
+            f->units = ls_copy->units;
+        }
+
+        if (mults != nullptr) {
+            strncpy_noterm(ls_copy->multipliers, mults, sizeof(ls_copy->multipliers));
+            f->mults = ls_copy->multipliers;
+        }
+
+    } else {
+        f->name = name;
+        f->fmt = fmt;
+        f->labels = labels;
+        f->units = units;
+        f->mults = mults;
+    }
 
     int16_t tmp = Write_calc_msg_len(fmt);
     if (tmp == -1) {
@@ -1110,37 +1160,41 @@ AP_Logger::log_write_fmt *AP_Logger::msg_fmt_for_name(const char *name, const ch
 
     f->msg_len = tmp;
 
-    // add to front of list
-    f->next = log_write_fmts;
-    log_write_fmts = f;
+    // add direct_comp formats to start of list, otherwise add to the end, this minimises the number of string comparisons when walking the list in future calls
+    if (direct_comp || (log_write_fmts == nullptr)) {
+        f->next = log_write_fmts;
+        log_write_fmts = f;
+    } else {
+        struct log_write_fmt *list_end = log_write_fmts;
+        while (list_end->next) {
+            list_end=list_end->next;
+        }
+        list_end->next = f;
+    }
 
 #if CONFIG_HAL_BOARD == HAL_BOARD_SITL
-    char ls_name[LS_NAME_SIZE] = {};
-    char ls_format[LS_FORMAT_SIZE] = {};
-    char ls_labels[LS_LABELS_SIZE] = {};
-    char ls_units[LS_UNITS_SIZE] = {};
-    char ls_multipliers[LS_MULTIPLIERS_SIZE] = {};
+    struct log_write_fmt_strings ls_strings = {};
     struct LogStructure ls = {
         f->msg_type,
         f->msg_len,
-        ls_name,
-        ls_format,
-        ls_labels,
-        ls_units,
-        ls_multipliers
+        ls_strings.name,
+        ls_strings.format,
+        ls_strings.labels,
+        ls_strings.units,
+        ls_strings.multipliers
     };
-    memcpy((char*)ls_name, f->name, MIN(sizeof(ls_name), strlen(f->name)));
-    memcpy((char*)ls_format, f->fmt, MIN(sizeof(ls_format), strlen(f->fmt)));
-    memcpy((char*)ls_labels, f->labels, MIN(sizeof(ls_labels), strlen(f->labels)));
+    memcpy((char*)ls_strings.name, f->name, MIN(sizeof(ls_strings.name), strlen(f->name)));
+    memcpy((char*)ls_strings.format, f->fmt, MIN(sizeof(ls_strings.format), strlen(f->fmt)));
+    memcpy((char*)ls_strings.labels, f->labels, MIN(sizeof(ls_strings.labels), strlen(f->labels)));
     if (f->units != nullptr) {
-        memcpy((char*)ls_units, f->units, MIN(sizeof(ls_units), strlen(f->units)));
+        memcpy((char*)ls_strings.units, f->units, MIN(sizeof(ls_strings.units), strlen(f->units)));
     } else {
-        memset((char*)ls_units, '?', MIN(sizeof(ls_format), strlen(f->fmt)));
+        memset((char*)ls_strings.units, '?', MIN(sizeof(ls_strings.format), strlen(f->fmt)));
     }
     if (f->mults != nullptr) {
-        memcpy((char*)ls_multipliers, f->mults, MIN(sizeof(ls_multipliers), strlen(f->mults)));
+        memcpy((char*)ls_strings.multipliers, f->mults, MIN(sizeof(ls_strings.multipliers), strlen(f->mults)));
     } else {
-        memset((char*)ls_multipliers, '?', MIN(sizeof(ls_format), strlen(f->fmt)));
+        memset((char*)ls_strings.multipliers, '?', MIN(sizeof(ls_strings.format), strlen(f->fmt)));
     }
     if (!validate_structure(&ls, (int16_t)-1)) {
         AP_BoardConfig::config_error("See console: Log structure invalid");
@@ -1198,8 +1252,9 @@ bool AP_Logger::msg_type_in_use(const uint8_t msg_type) const
 // find a free message type
 int16_t AP_Logger::find_free_msg_type() const
 {
+    const uint8_t start = LOGGING_FIRST_DYNAMIC_MSGID;
     // avoid using 255 here; perhaps we want to use it to extend things later
-    for (uint16_t msg_type=254; msg_type>0; msg_type--) { // more likely to be free at end
+    for (uint16_t msg_type=start; msg_type>0; msg_type--) { // more likely to be free at end
         if (! msg_type_in_use(msg_type)) {
             return msg_type;
         }
@@ -1290,6 +1345,36 @@ int16_t AP_Logger::Write_calc_msg_len(const char *fmt) const
     return len;
 }
 
+/*
+  see if we need to save a crash dump. Returns true if either no crash
+  dump available or we have saved it to sdcard. This is called
+  continuously until success to account for late mount of the microSD
+ */
+bool AP_Logger::check_crash_dump_save(void)
+{
+    int fd = AP::FS().open("@SYS/crash_dump.bin", O_RDONLY);
+    if (fd == -1) {
+        // we don't have a crash dump file. The @SYS filesystem
+        // returns -1 for open on empty files
+        return true;
+    }
+    int fd2 = AP::FS().open("APM/crash_dump.bin", O_WRONLY|O_CREAT|O_TRUNC);
+    if (fd2 == -1) {
+        // sdcard not available yet, try again later
+        AP::FS().close(fd);
+        return false;
+    }
+    uint8_t buf[128];
+    int32_t n;
+    while ((n = AP::FS().read(fd, buf, sizeof(buf))) > 0) {
+        AP::FS().write(fd2, buf, n);
+    }
+    AP::FS().close(fd2);
+    AP::FS().close(fd);
+    GCS_SEND_TEXT(MAV_SEVERITY_NOTICE, "Saved crash_dump.bin");
+    return true;
+}
+
 // thread for processing IO - in general IO involves a long blocking DMA write to an SPI device
 // and the thread will sleep while this completes preventing other tasks from running, it therefore
 // is necessary to run the IO in it's own thread
@@ -1297,6 +1382,8 @@ void AP_Logger::io_thread(void)
 {
     uint32_t last_run_us = AP_HAL::micros();
     uint32_t last_stack_us = last_run_us;
+    uint32_t last_crash_check_us = last_run_us;
+    bool done_crash_dump_save = false;
 
     while (true) {
         uint32_t now = AP_HAL::micros();
@@ -1314,6 +1401,13 @@ void AP_Logger::io_thread(void)
         if (now - last_stack_us > 100000U) {
             last_stack_us = now;
             hal.util->log_stack_info();
+        }
+
+        // check for saving a crash dump file every 5s
+        if (!done_crash_dump_save &&
+            now - last_crash_check_us > 5000000U) {
+            last_crash_check_us = now;
+            done_crash_dump_save = check_crash_dump_save();
         }
 #if HAL_LOGGER_FILE_CONTENTS_ENABLED
         file_content_update();
@@ -1589,3 +1683,5 @@ AP_Logger &logger()
 }
 
 };
+
+#endif // HAL_LOGGING_ENABLED

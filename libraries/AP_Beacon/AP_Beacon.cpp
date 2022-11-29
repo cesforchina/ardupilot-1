@@ -14,6 +14,9 @@
  */
 
 #include "AP_Beacon.h"
+
+#if AP_BEACON_ENABLED
+
 #include "AP_Beacon_Backend.h"
 #include "AP_Beacon_Pozyx.h"
 #include "AP_Beacon_Marvelmind.h"
@@ -74,8 +77,7 @@ const AP_Param::GroupInfo AP_Beacon::var_info[] = {
     AP_GROUPEND
 };
 
-AP_Beacon::AP_Beacon(AP_SerialManager &_serial_manager) :
-    serial_manager(_serial_manager)
+AP_Beacon::AP_Beacon()
 {
 #if CONFIG_HAL_BOARD == HAL_BOARD_SITL
     if (_singleton != nullptr) {
@@ -427,3 +429,5 @@ AP_Beacon *beacon()
 }
 
 }
+
+#endif

@@ -20,6 +20,7 @@
 #include "AC_AutoTune_Heli.h"
 
 #include <AP_Logger/AP_Logger.h>
+#include <GCS_MAVLink/GCS.h>
 
 #define AUTOTUNE_TESTING_STEP_TIMEOUT_MS   5000U     // timeout for tuning mode's testing step
 
@@ -521,7 +522,7 @@ void AC_AutoTune_Heli::load_test_gains()
 // load gains
 void AC_AutoTune_Heli::load_gain_set(AxisType s_axis, float rate_p, float rate_i, float rate_d, float rate_ff, float angle_p, float max_accel, float rate_fltt, float rate_flte, float smax)
 {
-    switch (axis) {
+    switch (s_axis) {
     case ROLL:
         attitude_control->get_rate_roll_pid().kP(rate_p);
         attitude_control->get_rate_roll_pid().kI(rate_i);
